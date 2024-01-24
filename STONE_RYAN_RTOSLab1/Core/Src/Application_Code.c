@@ -9,14 +9,14 @@
 #include "Application_Code.h"
 
 void app_init(){
-	GPIO_InitTypeDef gpio_init_B;
-	gpio_init_B.Pin = USR_BTN_PIN;
+	GPIO_InitTypeDef gpio_init_A;
+	gpio_init_A.Pin = USR_BTN_PIN;
 
 	GPIO_InitTypeDef gpio_init_G;
 	gpio_init_G.Pin = GRN_LED_PIN | RED_LED_PIN;
 
-	HAL_GPIO_Init(USR_BTN_PORT, &gpio_init_B);
-	HAL_GPIO_Init(USR_BTN_PORT, &gpio_init_G);
+	HAL_GPIO_Init(USR_BTN_PORT, &gpio_init_A);
+	HAL_GPIO_Init(LED_PORT, &gpio_init_G);
 }
 
 void led_toggle(){
