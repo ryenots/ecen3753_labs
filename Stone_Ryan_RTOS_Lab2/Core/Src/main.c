@@ -107,7 +107,6 @@ int main(void)
 	  drive_leds(velocity);
 	  HAL_Delay(100);
 #endif
-
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
