@@ -28,7 +28,7 @@ void led_toggle(){
 	int test = get_btn_state();
 	HAL_GPIO_WritePin(LED_PORT, RED_LED_PIN, test);
 
-	HAL_Delay(1000);
+	HAL_Delay(100);
 }
 
 int get_btn_state(){
