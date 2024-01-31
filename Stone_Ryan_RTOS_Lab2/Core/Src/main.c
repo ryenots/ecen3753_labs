@@ -21,6 +21,7 @@
 #include "Application_Code.h"
 
 #define LAB2_USE_INTERRUPT
+
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
