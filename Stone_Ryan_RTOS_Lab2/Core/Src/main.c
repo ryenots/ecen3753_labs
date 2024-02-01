@@ -18,9 +18,6 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "Application_Code.h"
-
-#define LAB2_USE_INTERRUPT
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -97,16 +94,12 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  HAL_NVIC_EnableIRQ(EXTI0_IRQn);
   init_app();
   while (1)
   {
     /* USER CODE END WHILE */
-#ifdef LAB2_USE_INTERRUPT
-	  get_btn_state();
-	  int16_t velocity = read_gyro_velocity();
-	  drive_leds(velocity);
-	  HAL_Delay(100);
-#endif
+//	  HAL_PWR_EnterSLEEPMode(PWR_MAINREGULATOR_ON, PWR_SLEEPENTRY_WFI);
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */

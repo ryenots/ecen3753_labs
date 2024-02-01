@@ -7,6 +7,8 @@
 
 #include "Application_Code.h"
 
+static int systick_count = 0;
+
 void init_app(){
 	Gyro_Init();
 }
@@ -38,3 +40,26 @@ void drive_leds(int16_t velocity){
 	}
 
 }
+
+void HAL_SYSTICK_Callback(){
+	systick_count += 1;
+	if(systick_count % 100 == 0){
+		systick_count = 0;
+		int16_t velocity = read_gyro_velocity();
+		drive_leds(velocity);
+	}
+}
+
+//void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
+//
+//
+//}
+
+void EXTI0_IRQHandler(){
+	HAL_NVIC_DisableIRQ(EXTI0_IRQn);
+	get_btn_state();
+
+	__HAL_GPIO_EXTI_CLEAR_FLAG(GPIO_PIN_0);
+	HAL_NVIC_EnableIRQ(EXTI0_IRQn);
+}
+
