@@ -18,7 +18,7 @@
 #define GRN_LED_PIN GPIO_PIN_13
 #define RED_LED_PIN GPIO_PIN_14
 
-static int usr_btn_state;
+extern int usr_btn_state;
 
 typedef enum{
 	CC_FAST = -1000,
@@ -26,7 +26,8 @@ typedef enum{
 	ZERO = 0,
 	C_SLOW = 100,
 	C_FAST = 1000
-};
+}GYRO_RANGE_ENUM;
+
 void init_app();
 void get_btn_state();
 int16_t read_gyro_velocity();

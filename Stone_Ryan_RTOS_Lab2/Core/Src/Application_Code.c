@@ -9,6 +9,8 @@
 
 static int systick_count = 0;
 
+int usr_btn_state = 0;
+
 void init_app(){
 	Gyro_Init();
 }
@@ -22,7 +24,7 @@ int16_t read_gyro_velocity(){
 }
 
 void drive_leds(int16_t velocity){
-	if(velocity > C_FAST && usr_btn_state){
+	if(velocity >= CC_SLOW && usr_btn_state){
 		//red led OR button
 		HAL_GPIO_WritePin(LED_PORT, RED_LED_PIN, GPIO_PIN_SET);
 	}else{
@@ -49,11 +51,6 @@ void HAL_SYSTICK_Callback(){
 		drive_leds(velocity);
 	}
 }
-
-//void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
-//
-//
-//}
 
 void EXTI0_IRQHandler(){
 	HAL_NVIC_DisableIRQ(EXTI0_IRQn);
