@@ -26,7 +26,7 @@ typedef enum{
 	ZERO = 0,
 	C_SLOW = 100,
 	C_FAST = 1000
-}GYRO_RANGE_ENUM;
+}Gyco_Range_Enum;
 
 void init_app();
 void get_btn_state();

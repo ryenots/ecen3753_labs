@@ -1,0 +1,13 @@
+1. assumptions, lab is vague
+2. 2 test cases
+3. final EC: memory sizes
+
+# Assumptions made:
+
+For this lab, I decided to have the function for reading gyro velocity to return the 16 bit value, as opposed to writing to a shared global variable. Doing this avoids having to create a atomic code section, as the value longer than a single bit. This is different compared to the user button, which is a global shared variable. This variable is only ever assigned a 1 or 0, so it does not need to be in a critcal atomic section either, as the write will not be interrupted halfway through.
+
+# Test cases:
+
+1. For the first test case, I held the user button down while the board was stationary, meaning both LEDs are expected to power on. The expected behavior is what is as observed.
+
+2. For the second test case, I held the user button down while rotating the board clockwise. The expected behavior is that the red LED should turn on. This is what occured. Next, I let go of the user button, and rotated the board counter-clockwise. In this case, the expected behavior is the green LED should turn on. This is also what occured.
