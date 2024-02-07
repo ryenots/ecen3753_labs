@@ -19,7 +19,6 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "Application_Code.h"
-
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
@@ -94,6 +93,7 @@ int main(void)
   /* USER CODE END 2 */
 
   /* Infinite loop */
+  /* USER CODE BEGIN WHILE */
 #define LAB2_USE_INTERRUPT
   /* USER CODE BEGIN WHILE */
 #ifdef LAB2_USE_INTERRUPT
