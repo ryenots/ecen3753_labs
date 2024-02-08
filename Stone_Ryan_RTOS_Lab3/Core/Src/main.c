@@ -132,7 +132,7 @@ int main(void)
   /* USER CODE END 2 */
 
   /* Init scheduler */
-//  osKernelInitialize();
+  osKernelInitialize();
 
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
@@ -163,18 +163,18 @@ int main(void)
   /* USER CODE END RTOS_EVENTS */
 
   /* Start scheduler */
-//  osKernelStart();
+  init_app();
+  HAL_NVIC_EnableIRQ(EXTI0_IRQn);
+  osKernelStart();
 
   /* We should never get here as control is now taken by the scheduler */
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  HAL_NVIC_EnableIRQ(EXTI0_IRQn);
 
-  init_app();
   while (1)
   {
     /* USER CODE END WHILE */
-//	  HAL_PWR_EnterSLEEPMode(PWR_MAINREGULATOR_ON, PWR_SLEEPENTRY_WFI);
+
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */

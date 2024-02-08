@@ -8,32 +8,46 @@
 
 #include "Application_Code.h"
 
+#define LAB3_USE_TASK
 #define TIMER_MS_PERIOD 100U
 
 //static int systick_count = 0;
 
 int usr_btn_state = 0;
 
+#ifndef LAB3_USE_TASK
 static osTimerId_t periodic_id;
 static StaticTimer_t static_timer;
 
-//osTimerAttr_t
-const char* name = "app_timer";
-const StaticTimer_t* timer_tcb_addr = &static_timer;
-const uint32_t StaticTimer_t_size = sizeof(StaticTimer_t);
+const osTimerAttr_t timer_attr = {
+	.name =  "app_timer",
+	.cb_mem = &static_timer,
+	.cb_size = sizeof(static_timer)
+};
 
 void timer_callback(void* argument);
+#else
 
+#define STACK_LEN 128
+static StaticTask_t task;
+static uint32_t stack[STACK_LEN];
+static osThreadId_t task_id;
+const osThreadAttr_t thread_attr = {
+		.cb_mem = &task,
+		.cb_size = sizeof(task),
+		.stack_mem = &stack[0],
+		.stack_size = sizeof(stack)
+};
+
+void gyro_led_task(void* argument);
+#endif
 /*
  * @brief Initialize application.
  */
 void init_app(){
 	Gyro_Init();
 
-	osTimerAttr_t timer_attr;
-	timer_attr.name = name;
-	timer_attr.cb_mem = timer_tcb_addr;
-	timer_attr.cb_size = StaticTimer_t_size;
+#ifndef LAB3_USE_TASK
 	periodic_id = osTimerNew(timer_callback, osTimerPeriodic, (void*)0, &timer_attr);
 
 	// Halt if timer was not created successfully.
@@ -43,6 +57,11 @@ void init_app(){
 
 	// Halt if timer could not be started.
 	if(status != osOK) while(1);
+#else
+	task_id = osThreadNew(gyro_led_task, (void*)0, &thread_attr);
+
+	if(task_id == NULL) while(1);
+#endif
 }
 
 /*
@@ -107,16 +126,30 @@ void EXTI0_IRQHandler(){
 	HAL_NVIC_EnableIRQ(EXTI0_IRQn);
 }
 
+#ifndef LAB3_USE_TASK
 void timer_callback(void* argument){
 	// remove unused variable warning
 	(void) &argument;
 	get_btn_state();
 	int16_t velocity = read_gyro_velocity();
 	drive_leds(velocity);
-	HAL_Delay(100);
-
+//	HAL_Delay(100);
 }
+#else
 
+void gyro_led_task(void* argument){
+	(void) &argument;
+
+	while(1){
+		get_btn_state();
+		int16_t velocity = read_gyro_velocity();
+		drive_leds(velocity);
+		osStatus_t status = osDelay(TIMER_MS_PERIOD);
+
+		if(status != osOK) while(1);
+	}
+}
+#endif
 
 
 
