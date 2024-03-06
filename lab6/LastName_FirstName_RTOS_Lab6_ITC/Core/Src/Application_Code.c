@@ -47,6 +47,7 @@ struct message{
 	int msg_type;
 	int16_t velocity;
 	int btn_state;
+	struct message* self;
 };
 
 static osTimerId_t periodic_id;
@@ -195,8 +196,9 @@ void btn_input_task(void* arg){
 		struct message* pMem = (struct message *) osMemoryPoolAlloc(mId, osWaitForever);
 		pMem->msg_type = BTN_INPUT;
 		pMem->btn_state = usr_btn_state;
+		pMem->self = pMem;
 
-		osStatus_t status = osMessageQueuePut(qId, pMem, 0, osWaitForever);
+		osStatus_t status = osMessageQueuePut(qId, &pMem, 0, osWaitForever);
 		if(status != osOK) while(1);
 	}
 }
@@ -218,8 +220,9 @@ void gyro_input_task(void* arg){
 		struct message* pMem = (struct message *) osMemoryPoolAlloc(mId, osWaitForever);
 		pMem->msg_type = GYRO_INPUT;
 		pMem->velocity = read_gyro_velocity();
+		pMem->self = pMem;
 
-		status = osMessageQueuePut(qId, pMem, 0, osWaitForever);
+		status = osMessageQueuePut(qId, &pMem, 0, osWaitForever);
 		if(status != osOK) while(1);
 	}
 }
@@ -230,7 +233,7 @@ void led_output_task(void* arg){
 	int16_t velocity = 0;
 	int btn_state = 0;
 	while(1){
-		osStatus_t status = osMessageQueueGet(qId, msg, NULL, osWaitForever);
+		osStatus_t status = osMessageQueueGet(qId, &msg, NULL, osWaitForever);
 		if(status != osOK) while(1);
 
 		if(msg->msg_type == BTN_INPUT){

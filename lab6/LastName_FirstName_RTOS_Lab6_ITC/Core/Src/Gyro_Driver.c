@@ -21,7 +21,6 @@ static HAL_StatusTypeDef HAL_Status;
 void Gyro_Init(){
 	Gyro_Power_On();
 //	HAL_Delay(100);
-
 	Gyro_Config_Regs();
 	Gyro_Reboot();
 
