@@ -10,6 +10,8 @@
 
 #include "stm32f4xx_hal.h"
 #include "Gyro_Driver.h"
+#include "cmsis_os2.h"
+#include "FreeRTOS.h"
 
 #define USR_BTN_PORT GPIOA
 #define USR_BTN_PIN GPIO_PIN_0
@@ -31,6 +33,6 @@ typedef enum{
 void init_app();
 void get_btn_state();
 int16_t read_gyro_velocity();
-void drive_leds(int16_t velocity);
+void drive_leds(int16_t velocity, int btn_state);
 
 #endif /* INC_APPLICATION_CODE_H_ */
