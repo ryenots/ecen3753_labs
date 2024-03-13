@@ -1,0 +1,32 @@
+I was not able to get SystemView running. What I am experiencing is I start recording,
+and the info box appears, but hangs at "recorder starting" with 1% progress. Eventually
+the box disappears without any error. I've reproduced this on both linux and windows, so
+I thought maybe it was an issue with my board. J-link seems to be working great with the
+IDE. I replaced my entire project, and just put my code back in in case I caused any
+issue with the segger files. I'm not sure how to proceed with the SystemView section of
+the lab at this point.
+
+3. I would assume the GyroInput task would match the timer period.
+4. My assumption is that the LEDOutput task would be synchronized with the ButtonInput task,
+    because the LEDOutput is awaiting new messages. ButtonInput sends new messages, causing
+    LEDOutput to become active.
+
+Summary of what I learned:
+In this lab, I was reminded on the use of Semaphores. In the computer science degree track,
+the class Operating Systems teaches this concept as well, so I was already familiar with the
+concept. What was new for me was some of the other mechanisms the OS provides, such as the
+message queue, and event flags. I also utilized the MemoryPool, so my message queue simply
+contained a pointer to the message. This was not neccessary for the lab to function, but was
+a good experience to understand in case the actual message was a larger data structure, which
+shouldn't be put into a queue.
+
+Functional tests:
+The following functional tests are passing:
+1. When rotating the board clockwise, the green led illuminates.
+2. When rotating the board counter-clockwise, and holding the button, the red led
+    illuminates.
+3. Holding the button while the board is stationary causes both leds to illuminate.
+
+I am not failing any functional tests I created, or any from previous labs.
+I did not rename my project to LastName_FirstName format, because it broke functionality with
+how some parts are not renamed in the IDE, and caused my project not to build.

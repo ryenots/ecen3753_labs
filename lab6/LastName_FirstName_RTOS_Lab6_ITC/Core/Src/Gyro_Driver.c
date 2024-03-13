@@ -23,8 +23,6 @@ void Gyro_Init(){
 //	HAL_Delay(100);
 	Gyro_Config_Regs();
 	Gyro_Reboot();
-
-
 }
 
 /**

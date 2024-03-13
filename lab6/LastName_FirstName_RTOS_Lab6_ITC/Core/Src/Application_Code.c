@@ -95,6 +95,7 @@ void timer_callback(void* arg);
 void gyro_input_task(void* arg);
 void btn_input_task(void* arg);
 void led_output_task(void* arg);
+
 /*
  * @brief Initialize application.
  */
@@ -249,7 +250,4 @@ void led_output_task(void* arg){
 		if(status != osOK) while(1);
 	}
 }
-
-
-
 
