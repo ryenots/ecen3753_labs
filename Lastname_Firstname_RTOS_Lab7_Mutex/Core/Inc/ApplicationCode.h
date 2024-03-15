@@ -12,6 +12,12 @@
 #include "Gyro_Driver.h"
 #include "cmsis_os.h"
 
+#define USR_BTN_PORT GPIOA
+#define USR_BTN_PIN GPIO_PIN_0
+
+#define LED_PORT GPIOG
+#define GRN_LED_PIN GPIO_PIN_13
+#define RED_LED_PIN GPIO_PIN_14
 
 void ApplicationInit(void);
 void RunDemoForLCD(void);
