@@ -7,21 +7,26 @@
 
 #include "ApplicationCode.h"
 #include "Gyro_Driver.h"
+#include "LCD_Driver.h"
 
-#define TASK_STACK_LEN 128
+#define TASK_STACK_LEN 64
 #define TASK_DELAY_PERIOD 100U
 #define BTN_TIMEOUT_MS 1000
 #define DECREMENT 0
 #define INCREMENT 1
 #define SPEED_CHANGE_UNIT 5
+#define SPEED_LIMIT 75
+#define SPEED_LIMIT_TURN 45
+#define COLLISION_WARN_PERIOD_MS 5000
 
-#define PRESS_EVENT 		   0x00000001
-#define HOLD_EVENT  		   0x00000010
-#define DIRECTION_CHANGE_EVENT 0x00000100
-#define SPEED_DATA_READY	   0x00001000
-#define DIRECTION_DATA_READY   0x00010000
-#define SPEED_VIOLATION		   0x00100000
-#define DUNNO   0x01000000
+#define PRESS_EVENT 		       0x00000001
+#define HOLD_EVENT  		       0x00000002
+#define DIRECTION_CHANGE_EVENT     0x00000004
+#define SPEED_DATA_READY	       0x00000008
+#define DIRECTION_DATA_READY       0x00000010
+#define SPEED_VIOLATION		       0x00000020
+#define DIRECTION_VIOLATION        0x00000040
+#define DIRECTION_VIOLATION_CLEAR  0x00000080
 
 
 typedef enum{
@@ -36,6 +41,14 @@ typedef enum{
 	right,
 	hard_right
 }vehicle_direction_enum;
+
+static char* direction_str[5][12] = {
+		"Hard left",
+		"Left",
+		"Straight",
+		"Right",
+		"Hard right"
+};
 
 typedef enum{
 	CC_FAST = -1000,
@@ -68,8 +81,8 @@ static osSemaphoreAttr_t s_attr = {
 static osEventFlagsId_t vehicle_event_group;
 static StaticEventGroup_t event_cb;
 static osEventFlagsAttr_t e_attr = {
-		.cb_mem = &event_cb,
-		.cb_size = sizeof(event_cb),
+//		.cb_mem = &event_cb,
+//		.cb_size = sizeof(event_cb),
 		.name = "vehicle_event_group"
 };
 
@@ -141,8 +154,35 @@ const osTimerAttr_t vm_timer_attr = {
 	.cb_size = sizeof(vm_static_timer)
 };
 
+static StaticTask_t led_output_task_cb;
+static uint32_t led_output_stack[TASK_STACK_LEN];
+static osThreadId_t led_output_task_id;
+const osThreadAttr_t led_output_attr = {
+		.cb_mem = &led_output_task_cb,
+		.cb_size = sizeof(led_output_task_cb),
+		.stack_mem = &led_output_stack[0],
+		.stack_size = sizeof(led_output_stack),
+		.name = "led_output_task"
+};
+
+static StaticTask_t lcd_display_task_cb;
+static uint32_t lcd_display_stack[TASK_STACK_LEN];
+static osThreadId_t lcd_display_task_id;
+const osThreadAttr_t lcd_display_attr = {
+		.cb_mem = &lcd_display_task_cb,
+		.cb_size = sizeof(lcd_display_task_cb),
+		.stack_mem = &lcd_display_stack[0],
+		.stack_size = sizeof(lcd_display_stack),
+		.name = "lcd_display_task"
+};
+
 void press_hold_timeout(void* arg);
 void speed_setpoint_task(void* arg);
+void vehicle_direction_task(void* arg);
+void vehicle_monitor_task(void* arg);
+void dir_violation_timeout(void* arg);
+void led_output_task(void* arg);
+void lcd_display_task(void* arg);
 
 void ApplicationInit(void)
 {
@@ -177,12 +217,19 @@ void ApplicationInit(void)
 	if(vehicle_direction_task_id == NULL) while(1);
 
 	//Vehicle monitor resources
-	vm_timer_id = osTimerNew(press_hold_timeout, osTimerOnce, (void*)0, &vm_timer_attr);
+	vm_timer_id = osTimerNew(dir_violation_timeout, osTimerOnce, (void*)0, &vm_timer_attr);
 	if(vm_timer_id == NULL) while(1);
 
 	vehicle_monitor_task_id = osThreadNew(vehicle_monitor_task, (void*)0, &vehicle_monitor_attr);
 	if(vehicle_monitor_task_id == NULL) while(1);
 
+	//Led output resources
+	led_output_task_id = osThreadNew(led_output_task, (void*)0, &led_output_attr);
+	if(led_output_task_id == NULL) while(1);
+
+	//Lcd display resources
+	lcd_display_task_id = osThreadNew(lcd_display_task, (void*)0, &lcd_display_attr);
+	if(lcd_display_task_id == NULL) while(1);
 }
 
 
@@ -260,12 +307,13 @@ void speed_setpoint_task(void* arg){
 		if(status != osOK) while(1);
 
 		// check for either press or hold event, write new value to setpoint data
-		if(osEventFlagsGet(vehicle_event_group) & PRESS_EVENT){
+		uint32_t flags = osEventFlagsGet(vehicle_event_group);
+		if(flags & PRESS_EVENT){
 			osEventFlagsClear(vehicle_event_group, PRESS_EVENT);
 			write_speed_setpoint(increment);
 		}
 
-		if(osEventFlagsGet(vehicle_event_group) & HOLD_EVENT){
+		if(flags & HOLD_EVENT){
 			osEventFlagsClear(vehicle_event_group, HOLD_EVENT);
 			write_speed_setpoint(decrement);
 		}
@@ -336,13 +384,104 @@ void vehicle_direction_task(void* arg){
  * ========================= Vehicle Monitor Task =========================
  */
 
+void dir_violation_timeout(void* arg){
+	(void) &arg;
+	osEventFlagsSet(vehicle_event_group, DIRECTION_VIOLATION);
+//	HAL_GPIO_WritePin(LED_PORT, GRN_LED_PIN, GPIO_PIN_SET);
+}
+
 void vehicle_monitor_task(void* arg){
 	(void) &arg;
-	// can we and flags together?
-	osEventFlagsWait(vehicle_event_group, (SPEED_DATA_READY & DIRECTION_DATA_READY), osFlagsNoClear, osWaitForever);
+	int speed = 0;
+	vehicle_direction_enum direction = left;
+	vehicle_direction_enum prev_direction = left;
 
+	while(1){
+		uint32_t flags = osEventFlagsWait(vehicle_event_group, (SPEED_DATA_READY | DIRECTION_DATA_READY), osFlagsWaitAny, osWaitForever);
 
+//		uint32_t flags = osEventFlagsGet(vehicle_event_group);
+
+		if(flags & DIRECTION_DATA_READY){
+			direction = read_v_direction();
+//			osEventFlagsClear(vehicle_event_group, DIRECTION_DATA_READY);
+
+			// check for direction violation, when new direction data is ready
+			if(osTimerIsRunning(vm_timer_id) && direction != prev_direction){
+					osTimerStop(vm_timer_id);
+					osEventFlagsSet(vehicle_event_group, DIRECTION_VIOLATION_CLEAR);
+//					HAL_GPIO_WritePin(LED_PORT, GRN_LED_PIN, GPIO_PIN_RESET);
+			}else if(direction == prev_direction){
+				osTimerStart(vehicle_event_group, COLLISION_WARN_PERIOD_MS);
+			}
+		}
+
+		if(flags & SPEED_DATA_READY){
+			speed = read_speed_setpoint();
+//			osEventFlagsClear(vehicle_event_group, SPEED_DATA_READY);
+
+			// check for speed violation, when new speed data is ready
+			if(direction == left || direction == right){
+				if(speed > SPEED_LIMIT)
+					osEventFlagsSet(vehicle_event_group, SPEED_VIOLATION);
+			}else{
+				if(speed > SPEED_LIMIT_TURN)
+					osEventFlagsSet(vehicle_event_group, SPEED_VIOLATION);
+			}
+		}
+
+		prev_direction = direction;
+	}
 }
+
+
+
+/*
+ * ========================= LED Output Task =========================
+ */
+
+void led_output_task(void* arg){
+	(void) &arg;
+	while(1){
+		uint32_t flags = osEventFlagsWait(vehicle_event_group, (DIRECTION_VIOLATION | DIRECTION_VIOLATION_CLEAR), osFlagsNoClear, osWaitForever);
+
+//		osEventFlagsGet(vehicle_event_group);
+
+		if(flags & DIRECTION_VIOLATION){
+//			osEventFlagsClear(vehicle_event_group, DIRECTION_VIOLATION);
+			HAL_GPIO_WritePin(LED_PORT, GRN_LED_PIN, GPIO_PIN_SET);
+		}
+
+		if(flags & DIRECTION_VIOLATION_CLEAR){
+//			osEventFlagsClear(vehicle_event_group, DIRECTION_VIOLATION_CLEAR);
+			HAL_GPIO_WritePin(LED_PORT, GRN_LED_PIN, GPIO_PIN_RESET);
+		}
+	}
+}
+
+
+
+/*
+ * ========================= LED Output Task =========================
+ */
+
+void lcd_display_task(void* arg){
+	(void) &arg;
+	LCD_Clear(0, LCD_COLOR_WHITE);
+	LCD_SetTextColor(LCD_COLOR_BLACK);
+	LCD_SetFont(&Font16x24);
+	while(1){
+		int speed = read_speed_setpoint();
+		vehicle_direction_enum direction = read_v_direction();
+
+		char* test_str = "test";
+//		LCD_DisplayString(170, 120, );
+		LCD_DisplayString(170, 120, test_str);
+		LCD_DisplayNumber(170, 180, (uint16_t)speed);
+//		LCD_Clear(0, LCD_COLOR_WHITE);
+		osDelay(TASK_DELAY_PERIOD);
+	}
+}
+
 void RunDemoForLCD(void)
 {
 	LCD_Clear(0,LCD_COLOR_WHITE);
