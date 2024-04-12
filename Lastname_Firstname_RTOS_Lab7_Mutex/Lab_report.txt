@@ -1,0 +1,16 @@
+A few things about this lab:
+
+ - I could not rename the lab in Lastname_Firstname format using the IDE, because it would
+totally break the build process. I think there are certain files or data within files
+that are not renamed causing the issue, which I do not know how to fix.
+
+ - This lab is "complete", but not functional, and I spent hours trying to debug the issue to
+no avail. The issue is a hardfault within the osEventFlagsSet function (Line 382 in ApplicationCode).
+I don't think the issue is actually this line, but instead something else, and the error is simply
+revealed here. I communicated via Slack with classmates, LA's, and John about this issue,
+and I never found a solution to the problem. Any insight would be most helpful, otherwise
+I will attend office hours to see if there is anything I am missing here.
+
+ - As for SystemView analysis, I was never able to get the program functional in the previous
+lab, and nothing has changed since then, On top of this, my lab obviously does not run for
+very long at all until the hardfault issue occurs.

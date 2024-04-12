@@ -7,9 +7,9 @@
 
 #include "ApplicationCode.h"
 #include "Gyro_Driver.h"
-#include "LCD_Driver.h"
+//#include "LCD_Driver.h"
 
-#define TASK_STACK_LEN 64
+#define TASK_STACK_LEN 128
 #define TASK_DELAY_PERIOD 100U
 #define BTN_TIMEOUT_MS 1000
 #define DECREMENT 0
@@ -43,19 +43,19 @@ typedef enum{
 }vehicle_direction_enum;
 
 static char* direction_str[5][12] = {
-		"Hard left",
-		"Left",
-		"Straight",
-		"Right",
-		"Hard right"
+		{"Hard left"},
+		{"Left"},
+		{"Straight"},
+		{"Right"},
+		{"Hard right"}
 };
 
 typedef enum{
-	CC_FAST = -1000,
-	CC_SLOW = -100,
+	CC_FAST = -8000,
+	CC_SLOW = -1000,
 	ZERO = 0,
-	C_SLOW = 100,
-	C_FAST = 1000
+	C_SLOW = 1000,
+	C_FAST = 8000
 }Gyro_Range_Enum;
 
 static struct{
@@ -70,34 +70,34 @@ static struct{
 	int right_turns;
 }vehicle_direction_data;
 
-static StaticSemaphore_t ss_sem_cb;
+//static StaticSemaphore_t ss_sem_cb;
 static osSemaphoreId_t ss_sem_id;
-static osSemaphoreAttr_t s_attr = {
-		.cb_mem = &ss_sem_cb,
-		.cb_size = sizeof(ss_sem_cb),
-		.name = "ss_sem"
-};
-
+//static osSemaphoreAttr_t s_attr = {
+//		.cb_mem = &ss_sem_cb,
+//		.cb_size = sizeof(ss_sem_cb),
+//		.name = "ss_sem"
+//};
+//
 static osEventFlagsId_t vehicle_event_group;
-static StaticEventGroup_t event_cb;
-static osEventFlagsAttr_t e_attr = {
-//		.cb_mem = &event_cb,
-//		.cb_size = sizeof(event_cb),
-		.name = "vehicle_event_group"
-};
-
-
-// Speed setpoint resources
+//static StaticEventGroup_t event_cb;
+//static osEventFlagsAttr_t e_attr = {
+////		.cb_mem = &event_cb,
+////		.cb_size = sizeof(event_cb),
+//		.name = "vehicle_event_group"
+//};
+//
+//
+//// Speed setpoint resources
 static int btn_timeout = 0;
-
+//
 static osTimerId_t ss_timer_id;
-static StaticTimer_t ss_static_timer;
-const osTimerAttr_t timer_attr = {
-	.name =  "ss_timer",
-	.cb_mem = &ss_static_timer,
-	.cb_size = sizeof(ss_static_timer)
-};
-
+//static StaticTimer_t ss_static_timer;
+//const osTimerAttr_t timer_attr = {
+//	.name =  "ss_timer",
+//	.cb_mem = &ss_static_timer,
+//	.cb_size = sizeof(ss_static_timer)
+//};
+//
 static StaticTask_t speed_setpoint_task_cb;
 static uint32_t speed_setpoint_stack[TASK_STACK_LEN];
 static osThreadId_t speed_setpoint_task_id;
@@ -108,15 +108,15 @@ const osThreadAttr_t speed_setpoint_attr = {
 		.stack_size = sizeof(speed_setpoint_stack),
 		.name = "speed_setpoint_task"
 };
-
+//
 static osMutexId_t speed_setpoint_mutex_id;
-static osMutexAttr_t speed_setpoint_m_attr = {
-		.cb_mem = NULL,
-		.cb_size = 0U
-};
-
-
-// Vehicle direction resources
+//static osMutexAttr_t speed_setpoint_m_attr = {
+//		.cb_mem = NULL,
+//		.cb_size = 0U
+//};
+//
+//
+//// Vehicle direction resources
 static StaticTask_t vehicle_direction_task_cb;
 static uint32_t vehicle_direction_stack[TASK_STACK_LEN];
 static osThreadId_t vehicle_direction_task_id;
@@ -129,12 +129,12 @@ const osThreadAttr_t vehicle_direction_attr = {
 };
 
 static osMutexId_t vehicle_direction_mutex_id;
-static osMutexAttr_t vehicle_direction_m_attr = {
-		.cb_mem = NULL,
-		.cb_size = 0U
-};
-
-// Vehicle monitor resources
+//static osMutexAttr_t vehicle_direction_m_attr = {
+//		.cb_mem = NULL,
+//		.cb_size = 0U
+//};
+//
+//// Vehicle monitor resources
 static StaticTask_t vehicle_monitor_task_cb;
 static uint32_t vehicle_monitor_stack[TASK_STACK_LEN];
 static osThreadId_t vehicle_monitor_task_id;
@@ -147,13 +147,13 @@ const osThreadAttr_t vehicle_monitor_attr = {
 };
 
 static osTimerId_t vm_timer_id;
-static StaticTimer_t vm_static_timer;
-const osTimerAttr_t vm_timer_attr = {
-	.name =  "vm_timer",
-	.cb_mem = &vm_static_timer,
-	.cb_size = sizeof(vm_static_timer)
-};
-
+//static StaticTimer_t vm_static_timer;
+//const osTimerAttr_t vm_timer_attr = {
+//	.name =  "vm_timer",
+//	.cb_mem = &vm_static_timer,
+//	.cb_size = sizeof(vm_static_timer)
+//};
+//
 static StaticTask_t led_output_task_cb;
 static uint32_t led_output_stack[TASK_STACK_LEN];
 static osThreadId_t led_output_task_id;
@@ -164,7 +164,7 @@ const osThreadAttr_t led_output_attr = {
 		.stack_size = sizeof(led_output_stack),
 		.name = "led_output_task"
 };
-
+//
 static StaticTask_t lcd_display_task_cb;
 static uint32_t lcd_display_stack[TASK_STACK_LEN];
 static osThreadId_t lcd_display_task_id;
@@ -191,33 +191,40 @@ void ApplicationInit(void)
     Gyro_Init();
 
     //write default data structure values
+    speed_setpoint_data.speed = 0;
+    speed_setpoint_data.increments = 0;
+    speed_setpoint_data.decrements = 0;
+
+    vehicle_direction_data.v_direction = left;
+    vehicle_direction_data.left_turns = 0;
+    vehicle_direction_data.right_turns = 0;
 
     // Global event group
-    vehicle_event_group = osEventFlagsNew(&e_attr);
+    vehicle_event_group = osEventFlagsNew(NULL);
 	if(vehicle_event_group == NULL) while(1);
 
 	//Setpoint resources
-    ss_timer_id = osTimerNew(press_hold_timeout, osTimerOnce, (void*)0, &timer_attr);
+    ss_timer_id = osTimerNew(press_hold_timeout, osTimerOnce, (void*)0, NULL);
 	if(ss_timer_id == NULL) while(1);
 
-	speed_setpoint_mutex_id = osMutexNew(&speed_setpoint_m_attr);
+	speed_setpoint_mutex_id = osMutexNew(NULL);
 	if(speed_setpoint_mutex_id == NULL) while(1);
 
-	ss_sem_id = osSemaphoreNew(1, 0, &s_attr);
+	ss_sem_id = osSemaphoreNew(1, 0, NULL);
 	if(ss_sem_id == NULL) while(1);
 
 	speed_setpoint_task_id = osThreadNew(speed_setpoint_task, (void*)0, &speed_setpoint_attr);
 	if(speed_setpoint_task_id == NULL) while(1);
 
 	//Vehicle direction resources
-	vehicle_direction_mutex_id = osMutexNew(&vehicle_direction_m_attr);
+	vehicle_direction_mutex_id = osMutexNew(NULL);
 	if(vehicle_direction_mutex_id == NULL) while(1);
 
 	vehicle_direction_task_id = osThreadNew(vehicle_direction_task, (void*)0, &vehicle_direction_attr);
 	if(vehicle_direction_task_id == NULL) while(1);
 
 	//Vehicle monitor resources
-	vm_timer_id = osTimerNew(dir_violation_timeout, osTimerOnce, (void*)0, &vm_timer_attr);
+	vm_timer_id = osTimerNew(dir_violation_timeout, osTimerOnce, (void*)0, NULL);
 	if(vm_timer_id == NULL) while(1);
 
 	vehicle_monitor_task_id = osThreadNew(vehicle_monitor_task, (void*)0, &vehicle_monitor_attr);
@@ -357,10 +364,10 @@ int16_t read_gyro_velocity(){
 
 void vehicle_direction_task(void* arg){
 	(void) &arg;
+	vehicle_direction_enum d;
+	int16_t velocity;
 	while(1){
-		int16_t velocity = read_gyro_velocity();
-		vehicle_direction_enum d;
-
+		velocity = read_gyro_velocity();
 		if(velocity > C_FAST){
 			d = hard_right;
 		}else if(velocity <= C_FAST && velocity > ZERO){
@@ -387,7 +394,6 @@ void vehicle_direction_task(void* arg){
 void dir_violation_timeout(void* arg){
 	(void) &arg;
 	osEventFlagsSet(vehicle_event_group, DIRECTION_VIOLATION);
-//	HAL_GPIO_WritePin(LED_PORT, GRN_LED_PIN, GPIO_PIN_SET);
 }
 
 void vehicle_monitor_task(void* arg){
@@ -399,26 +405,19 @@ void vehicle_monitor_task(void* arg){
 	while(1){
 		uint32_t flags = osEventFlagsWait(vehicle_event_group, (SPEED_DATA_READY | DIRECTION_DATA_READY), osFlagsWaitAny, osWaitForever);
 
-//		uint32_t flags = osEventFlagsGet(vehicle_event_group);
-
 		if(flags & DIRECTION_DATA_READY){
 			direction = read_v_direction();
-//			osEventFlagsClear(vehicle_event_group, DIRECTION_DATA_READY);
-
 			// check for direction violation, when new direction data is ready
 			if(osTimerIsRunning(vm_timer_id) && direction != prev_direction){
 					osTimerStop(vm_timer_id);
 					osEventFlagsSet(vehicle_event_group, DIRECTION_VIOLATION_CLEAR);
-//					HAL_GPIO_WritePin(LED_PORT, GRN_LED_PIN, GPIO_PIN_RESET);
 			}else if(direction == prev_direction){
-				osTimerStart(vehicle_event_group, COLLISION_WARN_PERIOD_MS);
+				osTimerStart(vm_timer_id, COLLISION_WARN_PERIOD_MS);
 			}
 		}
 
 		if(flags & SPEED_DATA_READY){
 			speed = read_speed_setpoint();
-//			osEventFlagsClear(vehicle_event_group, SPEED_DATA_READY);
-
 			// check for speed violation, when new speed data is ready
 			if(direction == left || direction == right){
 				if(speed > SPEED_LIMIT)
@@ -444,15 +443,11 @@ void led_output_task(void* arg){
 	while(1){
 		uint32_t flags = osEventFlagsWait(vehicle_event_group, (DIRECTION_VIOLATION | DIRECTION_VIOLATION_CLEAR), osFlagsNoClear, osWaitForever);
 
-//		osEventFlagsGet(vehicle_event_group);
-
 		if(flags & DIRECTION_VIOLATION){
-//			osEventFlagsClear(vehicle_event_group, DIRECTION_VIOLATION);
 			HAL_GPIO_WritePin(LED_PORT, GRN_LED_PIN, GPIO_PIN_SET);
 		}
 
 		if(flags & DIRECTION_VIOLATION_CLEAR){
-//			osEventFlagsClear(vehicle_event_group, DIRECTION_VIOLATION_CLEAR);
 			HAL_GPIO_WritePin(LED_PORT, GRN_LED_PIN, GPIO_PIN_RESET);
 		}
 	}
@@ -473,18 +468,16 @@ void lcd_display_task(void* arg){
 		int speed = read_speed_setpoint();
 		vehicle_direction_enum direction = read_v_direction();
 
-		char* test_str = "test";
-//		LCD_DisplayString(170, 120, );
-		LCD_DisplayString(170, 120, test_str);
-		LCD_DisplayNumber(170, 180, (uint16_t)speed);
-//		LCD_Clear(0, LCD_COLOR_WHITE);
+		LCD_DisplayString(20, 120, *direction_str[direction]);
+		LCD_DisplayNumber(20, 180, (uint16_t)speed);
 		osDelay(TASK_DELAY_PERIOD);
+		LCD_Clear(0, LCD_COLOR_WHITE);
 	}
 }
 
-void RunDemoForLCD(void)
-{
-	LCD_Clear(0,LCD_COLOR_WHITE);
-	QuickDemo();
-}
+//void RunDemoForLCD(void)
+//{
+//	LCD_Clear(0,LCD_COLOR_WHITE);
+//	QuickDemo();
+//}
 
