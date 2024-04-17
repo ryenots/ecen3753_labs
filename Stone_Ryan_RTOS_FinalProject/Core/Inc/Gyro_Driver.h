@@ -54,7 +54,8 @@
 void Gyro_Init();
 void Gyro_Power_On();
 void Gyro_Reboot();
-int16_t Gyro_Get_Velocity();
+int16_t Gyro_Get_X_Velocity();
+int16_t Gyro_Get_Y_Velocity();
 void Gyro_Config_Regs();
 void Gyro_HAL_Check();
 void Gyro_Slave_Enable();

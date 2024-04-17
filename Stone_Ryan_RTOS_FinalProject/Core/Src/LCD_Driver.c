@@ -191,11 +191,15 @@ void LTCD_Layer_Init(uint8_t LayerIndex)
 
 }
 
+// using fb[y*W+x]
 // Draws a single pixel, should be useds only within this fileset and should not be seen by external clients. 
-void LCD_Draw_Pixel(uint16_t x, uint16_t y, uint16_t color)
-{
-	frameBuffer[y*LCD_PIXEL_WIDTH+x] = color;  //You cannot do x*y to set the pixel.
-
+int LCD_Draw_Pixel(uint16_t x, uint16_t y, uint16_t color){
+	if(x < LCD_PIXEL_WIDTH && y < LCD_PIXEL_HEIGHT){
+		frameBuffer[y*LCD_PIXEL_WIDTH+x] = color;  //You cannot do x*y to set the pixel.
+		return 1; // normal draw
+	}else{
+		return 0; // outside of region, failure
+	}
 }
 
 
@@ -301,6 +305,15 @@ void LCD_Draw_Vertical_Line(uint16_t x, uint16_t y, uint16_t len, uint16_t color
   for (uint16_t i = 0; i < len; i++)
   {
 	  LCD_Draw_Pixel(x, i+y, color);
+  }
+}
+
+// Draw Horizontal Line
+void LCD_Draw_Horizontal_Line(uint16_t x, uint16_t y, uint16_t len, uint16_t color)
+{
+  for (uint16_t i = 0; i < len; i++)
+  {
+	  LCD_Draw_Pixel(x+i, y, color);
   }
 }
 

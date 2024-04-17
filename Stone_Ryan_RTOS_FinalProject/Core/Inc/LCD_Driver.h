@@ -60,6 +60,7 @@ void LCD_Draw_Circle_Fill(uint16_t Xpos, uint16_t Ypos, uint16_t radius, uint16_
 
 // Draw Vertical Line
 void LCD_Draw_Vertical_Line(uint16_t x, uint16_t y, uint16_t len, uint16_t color);
+void LCD_Draw_Horizontal_Line(uint16_t x, uint16_t y, uint16_t len, uint16_t color);
 void LCD_Clear(uint8_t LayerIndex, uint16_t Color);
 
 void LCD_Error_Handler(void);

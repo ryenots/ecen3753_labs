@@ -5,6 +5,8 @@
  *      Author: ryenots
  */
 
+#include "stdbool.h"
+
 #ifndef INC_GAME_CONFIG_H_
 #define INC_GAME_CONFIG_H_
 
@@ -20,7 +22,7 @@ struct{
 	int update_frequency;
 	pin_at_center center;
 	int angleGain;
-}physics = {980, 50, drone_at_center, 500};
+}physics = {98, 50, drone_at_center, 500};
 
 struct Disruptor{
 	int max_time;    		  // ms
@@ -63,13 +65,17 @@ struct Waypoints{
 
 struct{
 	int time_to_complete;
-	int cell_size;
+	int cell_size; //px
 	struct Size* size;
 	struct Obstacle_Probability* o_p;
 	int hole_diameter;
 	int hard_edged;
 	struct Waypoints* waypoints;
-}maze = {30000, 12, &size_, &obstacle_probability_, 11, 1, &waypoints_};
+}maze_config = {30000, 15, &size_, &obstacle_probability_, 11, 1, &waypoints_};
 
+typedef struct Cell{
+	bool top;
+	bool right;
+}Cell;
 
 #endif /* INC_GAME_CONFIG_H_ */

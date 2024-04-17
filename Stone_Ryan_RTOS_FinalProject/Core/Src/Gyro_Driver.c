@@ -23,6 +23,7 @@ void Gyro_Init(){
 	osDelay(100);
 	Gyro_Config_Regs();
 	Gyro_Reboot();
+	osDelay(100);
 
 
 }

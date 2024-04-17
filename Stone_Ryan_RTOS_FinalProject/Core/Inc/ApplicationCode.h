@@ -22,7 +22,7 @@
 #define GRN_LED_PIN GPIO_PIN_13
 #define RED_LED_PIN GPIO_PIN_14
 
-void ApplicationInit(void);
+void ApplicationInit(RNG_HandleTypeDef*);
 void LCD_Visual_Demo(void);
 
 #if (COMPILE_TOUCH_FUNCTIONS == 1) && (COMPILE_TOUCH_INTERRUPT_SUPPORT == 0)

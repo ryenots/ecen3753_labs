@@ -41,11 +41,19 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+DMA2D_HandleTypeDef hdma2d;
+
+I2C_HandleTypeDef hi2c3;
+
 LTDC_HandleTypeDef hltdc;
+
+RNG_HandleTypeDef hrng;
 
 SPI_HandleTypeDef hspi5;
 
 TIM_HandleTypeDef htim11;
+
+SDRAM_HandleTypeDef hsdram2;
 
 /* Definitions for defaultTask */
 osThreadId_t defaultTaskHandle;
@@ -64,6 +72,10 @@ static void MX_GPIO_Init(void);
 static void MX_SPI5_Init(void);
 static void MX_LTDC_Init(void);
 static void MX_TIM11_Init(void);
+static void MX_DMA2D_Init(void);
+static void MX_FMC_Init(void);
+static void MX_I2C3_Init(void);
+static void MX_RNG_Init(void);
 void StartDefaultTask(void *argument);
 
 /* USER CODE BEGIN PFP */
@@ -131,13 +143,14 @@ int main(void)
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
+  MX_RNG_Init();
   MX_GPIO_Init();
   MX_SPI5_Init();
   MX_LTDC_Init();
   MX_TIM11_Init();
   /* USER CODE BEGIN 2 */
 
-  ApplicationInit();
+  ApplicationInit(&hrng);
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -234,6 +247,91 @@ void SystemClock_Config(void)
 }
 
 /**
+  * @brief DMA2D Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_DMA2D_Init(void)
+{
+
+  /* USER CODE BEGIN DMA2D_Init 0 */
+
+  /* USER CODE END DMA2D_Init 0 */
+
+  /* USER CODE BEGIN DMA2D_Init 1 */
+
+  /* USER CODE END DMA2D_Init 1 */
+  hdma2d.Instance = DMA2D;
+  hdma2d.Init.Mode = DMA2D_M2M;
+  hdma2d.Init.ColorMode = DMA2D_OUTPUT_RGB565;
+  hdma2d.Init.OutputOffset = 0;
+  hdma2d.LayerCfg[1].InputOffset = 0;
+  hdma2d.LayerCfg[1].InputColorMode = DMA2D_INPUT_RGB565;
+  hdma2d.LayerCfg[1].AlphaMode = DMA2D_NO_MODIF_ALPHA;
+  hdma2d.LayerCfg[1].InputAlpha = 0;
+  if (HAL_DMA2D_Init(&hdma2d) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_DMA2D_ConfigLayer(&hdma2d, 1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN DMA2D_Init 2 */
+
+  /* USER CODE END DMA2D_Init 2 */
+
+}
+
+/**
+  * @brief I2C3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2C3_Init(void)
+{
+
+  /* USER CODE BEGIN I2C3_Init 0 */
+
+  /* USER CODE END I2C3_Init 0 */
+
+  /* USER CODE BEGIN I2C3_Init 1 */
+
+  /* USER CODE END I2C3_Init 1 */
+  hi2c3.Instance = I2C3;
+  hi2c3.Init.ClockSpeed = 100000;
+  hi2c3.Init.DutyCycle = I2C_DUTYCYCLE_2;
+  hi2c3.Init.OwnAddress1 = 0;
+  hi2c3.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c3.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c3.Init.OwnAddress2 = 0;
+  hi2c3.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c3.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Analogue filter
+  */
+  if (HAL_I2CEx_ConfigAnalogFilter(&hi2c3, I2C_ANALOGFILTER_ENABLE) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Digital filter
+  */
+  if (HAL_I2CEx_ConfigDigitalFilter(&hi2c3, 0) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2C3_Init 2 */
+
+  /* USER CODE END I2C3_Init 2 */
+
+}
+
+/**
   * @brief LTDC Initialization Function
   * @param None
   * @retval None
@@ -316,6 +414,32 @@ static void MX_LTDC_Init(void)
 }
 
 /**
+  * @brief RNG Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_RNG_Init(void)
+{
+
+  /* USER CODE BEGIN RNG_Init 0 */
+
+  /* USER CODE END RNG_Init 0 */
+
+  /* USER CODE BEGIN RNG_Init 1 */
+
+  /* USER CODE END RNG_Init 1 */
+  hrng.Instance = RNG;
+  if (HAL_RNG_Init(&hrng) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN RNG_Init 2 */
+
+  /* USER CODE END RNG_Init 2 */
+
+}
+
+/**
   * @brief SPI5 Initialization Function
   * @param None
   * @retval None
@@ -384,6 +508,53 @@ static void MX_TIM11_Init(void)
 
 }
 
+/* FMC initialization function */
+static void MX_FMC_Init(void)
+{
+
+  /* USER CODE BEGIN FMC_Init 0 */
+
+  /* USER CODE END FMC_Init 0 */
+
+  FMC_SDRAM_TimingTypeDef SdramTiming = {0};
+
+  /* USER CODE BEGIN FMC_Init 1 */
+
+  /* USER CODE END FMC_Init 1 */
+
+  /** Perform the SDRAM2 memory initialization sequence
+  */
+  hsdram2.Instance = FMC_SDRAM_DEVICE;
+  /* hsdram2.Init */
+  hsdram2.Init.SDBank = FMC_SDRAM_BANK2;
+  hsdram2.Init.ColumnBitsNumber = FMC_SDRAM_COLUMN_BITS_NUM_8;
+  hsdram2.Init.RowBitsNumber = FMC_SDRAM_ROW_BITS_NUM_12;
+  hsdram2.Init.MemoryDataWidth = FMC_SDRAM_MEM_BUS_WIDTH_16;
+  hsdram2.Init.InternalBankNumber = FMC_SDRAM_INTERN_BANKS_NUM_4;
+  hsdram2.Init.CASLatency = FMC_SDRAM_CAS_LATENCY_1;
+  hsdram2.Init.WriteProtection = FMC_SDRAM_WRITE_PROTECTION_DISABLE;
+  hsdram2.Init.SDClockPeriod = FMC_SDRAM_CLOCK_DISABLE;
+  hsdram2.Init.ReadBurst = FMC_SDRAM_RBURST_DISABLE;
+  hsdram2.Init.ReadPipeDelay = FMC_SDRAM_RPIPE_DELAY_0;
+  /* SdramTiming */
+  SdramTiming.LoadToActiveDelay = 16;
+  SdramTiming.ExitSelfRefreshDelay = 16;
+  SdramTiming.SelfRefreshTime = 16;
+  SdramTiming.RowCycleDelay = 16;
+  SdramTiming.WriteRecoveryTime = 16;
+  SdramTiming.RPDelay = 16;
+  SdramTiming.RCDDelay = 16;
+
+  if (HAL_SDRAM_Init(&hsdram2, &SdramTiming) != HAL_OK)
+  {
+    Error_Handler( );
+  }
+
+  /* USER CODE BEGIN FMC_Init 2 */
+
+  /* USER CODE END FMC_Init 2 */
+}
+
 /**
   * @brief GPIO Initialization Function
   * @param None
@@ -416,26 +587,6 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOG, LD3_Pin|LD4_Pin, GPIO_PIN_RESET);
-
-  /*Configure GPIO pins : A0_Pin A1_Pin A2_Pin A3_Pin
-                           A4_Pin A5_Pin SDNRAS_Pin A6_Pin
-                           A7_Pin A8_Pin A9_Pin */
-  GPIO_InitStruct.Pin = A0_Pin|A1_Pin|A2_Pin|A3_Pin
-                          |A4_Pin|A5_Pin|SDNRAS_Pin|A6_Pin
-                          |A7_Pin|A8_Pin|A9_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-  GPIO_InitStruct.Alternate = GPIO_AF12_FMC;
-  HAL_GPIO_Init(GPIOF, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : SDNWE_Pin */
-  GPIO_InitStruct.Pin = SDNWE_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-  GPIO_InitStruct.Alternate = GPIO_AF12_FMC;
-  HAL_GPIO_Init(SDNWE_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : NCS_MEMS_SPI_Pin CSX_Pin OTG_FS_PSO_Pin */
   GPIO_InitStruct.Pin = NCS_MEMS_SPI_Pin|CSX_Pin|OTG_FS_PSO_Pin;
@@ -475,28 +626,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(BOOT1_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : A10_Pin A11_Pin BA0_Pin BA1_Pin
-                           SDCLK_Pin SDNCAS_Pin */
-  GPIO_InitStruct.Pin = A10_Pin|A11_Pin|BA0_Pin|BA1_Pin
-                          |SDCLK_Pin|SDNCAS_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-  GPIO_InitStruct.Alternate = GPIO_AF12_FMC;
-  HAL_GPIO_Init(GPIOG, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : D4_Pin D5_Pin D6_Pin D7_Pin
-                           D8_Pin D9_Pin D10_Pin D11_Pin
-                           D12_Pin NBL0_Pin NBL1_Pin */
-  GPIO_InitStruct.Pin = D4_Pin|D5_Pin|D6_Pin|D7_Pin
-                          |D8_Pin|D9_Pin|D10_Pin|D11_Pin
-                          |D12_Pin|NBL0_Pin|NBL1_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-  GPIO_InitStruct.Alternate = GPIO_AF12_FMC;
-  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
-
   /*Configure GPIO pins : OTG_HS_ID_Pin OTG_HS_DM_Pin OTG_HS_DP_Pin */
   GPIO_InitStruct.Pin = OTG_HS_ID_Pin|OTG_HS_DM_Pin|OTG_HS_DP_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
@@ -511,16 +640,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(VBUS_HS_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : D13_Pin D14_Pin D15_Pin D0_Pin
-                           D1_Pin D2_Pin D3_Pin */
-  GPIO_InitStruct.Pin = D13_Pin|D14_Pin|D15_Pin|D0_Pin
-                          |D1_Pin|D2_Pin|D3_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-  GPIO_InitStruct.Alternate = GPIO_AF12_FMC;
-  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
-
   /*Configure GPIO pin : TE_Pin */
   GPIO_InitStruct.Pin = TE_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
@@ -533,22 +652,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : I2C3_SDA_Pin */
-  GPIO_InitStruct.Pin = I2C3_SDA_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_OD;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF4_I2C3;
-  HAL_GPIO_Init(I2C3_SDA_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : I2C3_SCL_Pin */
-  GPIO_InitStruct.Pin = I2C3_SCL_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_OD;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF4_I2C3;
-  HAL_GPIO_Init(I2C3_SCL_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : STLINK_RX_Pin STLINK_TX_Pin */
   GPIO_InitStruct.Pin = STLINK_RX_Pin|STLINK_TX_Pin;
@@ -564,14 +667,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOG, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : SDCKE1_Pin SDNE1_Pin */
-  GPIO_InitStruct.Pin = SDCKE1_Pin|SDNE1_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-  GPIO_InitStruct.Alternate = GPIO_AF12_FMC;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
 /* USER CODE BEGIN MX_GPIO_Init_2 */
 /* USER CODE END MX_GPIO_Init_2 */
