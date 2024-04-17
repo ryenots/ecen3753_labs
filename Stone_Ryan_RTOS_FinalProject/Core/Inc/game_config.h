@@ -22,7 +22,7 @@ struct{
 	int update_frequency;
 	pin_at_center center;
 	int angleGain;
-}physics = {98, 50, drone_at_center, 500};
+}physics = {980, 50, drone_at_center, 500};
 
 struct Disruptor{
 	int max_time;    		  // ms
