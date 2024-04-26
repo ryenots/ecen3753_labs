@@ -40,7 +40,8 @@ RNG_HandleTypeDef* hrng_ptr;
 static struct{
 	double x;
 	double y;
-//	double timestep;
+	double x_vel;
+	double y_vel;
 }xy_pos_dif;
 
 static struct{
@@ -102,6 +103,8 @@ void read_xy_pos_dif(double* xy){
 
 	xy[0] = xy_pos_dif.x;
 	xy[1] = xy_pos_dif.y;
+	xy[2] = xy_pos_dif.x_vel;
+	xy[3] = xy_pos_dif.y_vel;
 
 	osMutexRelease(xy_pos_dif_mutex_id);
 }
@@ -111,6 +114,8 @@ void write_xy_pos_dif(double* xy){
 
 	xy_pos_dif.x = xy[0];
 	xy_pos_dif.y = xy[1];
+	xy_pos_dif.x_vel = xy[2];
+	xy_pos_dif.y_vel = xy[3];
 
 	osMutexRelease(xy_pos_dif_mutex_id);
 }
@@ -172,7 +177,7 @@ void gyro_polling_task(void* arg){
 	double gyro_sensitivity = 17.50;
 	double conversion_const = (rads_ratio * gyro_sensitivity)/1000;
 
-	double xy_pos[2];
+	double xy_dif[4];
 
 	int16_t x_read;
 	double x_rads_per_sec = 0;
@@ -237,10 +242,12 @@ void gyro_polling_task(void* arg){
 		x_dif = x_pos - x_prev;
 		y_dif = y_pos - y_prev;
 
-		xy_pos[0] = x_dif;
-		xy_pos[1] = y_dif;
+		xy_dif[0] = x_dif;
+		xy_dif[1] = y_dif;
+		xy_dif[2] = x_velocity;
+		xy_dif[3] = y_velocity;
 
-		write_xy_pos_dif(xy_pos);
+		write_xy_pos_dif(xy_dif);
 
 		x_prev = x_pos;
 		y_prev = y_pos;
@@ -280,6 +287,51 @@ void generate_maze(void){
 	}
 }
 
+void get_nearby_walls(int x, int y, bool* walls){
+	if(x < 0 || y < 0 || x >= maze_config.size->width || y >= maze_config.size->height){
+		walls[0] = false;
+		walls[1] = false;
+		walls[2] = false;
+		walls[3] = false;
+		return;
+	}
+
+	bool left, right, top, bottom;
+	bool h_e = maze_config.hard_edged;
+	//left
+	if(h_e && x == 0){
+		left = true;
+	}else{
+		left = maze[x-1][y].right;
+	}
+
+	//right
+	if(h_e && x == (maze_config.size->width - 1)){
+		right = true;
+	}else{
+		right = maze[x][y].right;
+	}
+
+	//top
+	if(h_e && y == 0){
+		top = true;
+	}else{
+		top = maze[x][y].top;
+	}
+
+	//bottom
+	if(h_e && y == (maze_config.size->height - 1)){
+		bottom = true;
+	}else{
+		bottom = maze[x][y+1].top;
+	}
+
+	walls[0] = left;
+	walls[1] = right;
+	walls[2] = top;
+	walls[3] = bottom;
+}
+
 void game_comp_task(void* arg){
 	(void) &arg;
 	// generate maze first
@@ -288,12 +340,12 @@ void game_comp_task(void* arg){
 
 	osEventFlagsSet(event_group_id, MAZE_GENERATED);
 
-	double xy_dif[2];
+	double xy_dif[4];
 	double xy_pos[2];
 
 	//add random logic later
 	// ball spawn pos
-	xy_pos[0] = LCD_PIXEL_WIDTH/2;
+	xy_pos[0] = (LCD_PIXEL_WIDTH/2)+8;
 	xy_pos[1] = LCD_PIXEL_HEIGHT/2;
 	write_xy_position(xy_pos);
 
@@ -307,87 +359,133 @@ void game_comp_task(void* arg){
 
 //	double T = 0.02;
 //	double x_pos, y_pos;
+	bool walls[4];
 	double x_new_pos, y_new_pos;
 	int prev_x_cell = -1;
 	int prev_y_cell = -1;
 	int x_collision, y_collision;
 	int radius = drone.diameter/2;
+	int cell_size = maze_config.cell_size;
 	while(1){
 		x_collision = 0;
 		y_collision = 0;
 		read_xy_pos_dif(xy_dif);
-
-//		x_vel = xy_vel[0];
-//		y_vel = xy_vel[1];
-
 		read_xy_position(xy_pos);
 
 		x_new_pos = xy_dif[0] + xy_pos[0];
 		y_new_pos = xy_dif[1] + xy_pos[1];
 
-		int cur_x_cell = x_new_pos/maze_config.cell_size;
-		int cur_y_cell = y_new_pos/maze_config.cell_size;
+		int cur_x_cell = xy_pos[0]/cell_size;
+		int cur_y_cell = xy_pos[1]/cell_size;
 
-		if(prev_x_cell == -1){
-			prev_x_cell = cur_x_cell;
-			prev_y_cell = cur_y_cell;
-			continue;
-		}else{
-			if(prev_x_cell != cur_x_cell){
-				int dif = cur_x_cell - prev_x_cell;
-				if(dif == 1){
-					if(maze[prev_x_cell][cur_y_cell].right){
-						//collision
-						x_collision = 1;
-						xy_pos[0] = (cur_x_cell * maze_config.cell_size);
-						osEventFlagsSet(event_group_id, COLLISION_X);
-					}
-				}else if(dif == -1){
-					if(maze[cur_x_cell][cur_y_cell].right){
-						//collision
-						x_collision = 1;
-						xy_pos[0] = (prev_x_cell * maze_config.cell_size) + 2*radius;
-						osEventFlagsSet(event_group_id, COLLISION_X);
-					}
-				}else{
-//					while(1);
+		// left, right, top, bottom
+		get_nearby_walls(cur_x_cell, cur_y_cell, walls);
 
-				}
+		// future optimization: dont do calculations for cells that dont have walls OR if we are not headed in the direction of the wall (use +- velocity)
+		double x_sub_pos, y_sub_pos;
+		x_sub_pos = fmod(xy_pos[0], cell_size);
+		y_sub_pos = fmod(xy_pos[1], cell_size);
+
+		if(xy_dif[2] < 0 && walls[0]){
+			// negative x velocity
+			if(x_sub_pos + xy_dif[0] - radius < 0){
+				// x left wall collision
+				osEventFlagsSet(event_group_id, COLLISION_X);
+				x_collision = 1;
 			}
 
-			if(prev_y_cell != cur_y_cell){
-				int dif = cur_y_cell - prev_y_cell;
-				if(dif == 1){
-					if(maze[cur_x_cell][prev_y_cell].top){
-						//collision
-						y_collision = 1;
-						xy_pos[1] = (cur_y_cell * maze_config.cell_size);
-						osEventFlagsSet(event_group_id, COLLISION_Y);
-					}
-				}else if(dif == -1){
-					if(maze[cur_x_cell][cur_y_cell].top){
-						//collision
-						y_collision = 1;
-						xy_pos[1] = (prev_y_cell * maze_config.cell_size) + radius + 1;
-						osEventFlagsSet(event_group_id, COLLISION_Y);
-					}
-				}else{
-//					while(1);
-				}
+		}else if(xy_dif[2] > 0 && walls[1]){
+			// positive x velocity
+			if(x_sub_pos + xy_dif[0] + radius > cell_size){
+				// x right wall collision
+				// in this case, ignore any more positive position changes in x direction?
+				// until something happens....?
+				// until x becomes negative velocity, OR Y leaves this cell?
+				osEventFlagsSet(event_group_id, COLLISION_X);
+				x_collision = 1;
+			}
+		}
+
+		if(xy_dif[3] < 0 && walls[2]){
+			// negative y velocity
+			if(y_sub_pos + xy_dif[1] - radius < 0){
+				// y top wall collision
+				osEventFlagsSet(event_group_id, COLLISION_Y);
+				y_collision = 1;
 			}
 
+		}else if(xy_dif[3] > 0 && walls[3]){
+			// positive y velocity
+			if(y_sub_pos + xy_dif[1] + radius > cell_size){
+				// y bottom wall collision
+				osEventFlagsSet(event_group_id, COLLISION_Y);
+				y_collision = 1;
+			}
 		}
 
+		if(!x_collision) xy_pos[0] += xy_dif[0];
+		if(!y_collision) xy_pos[1] += xy_dif[1];
 
-		if(!x_collision){
-			xy_pos[0] = x_new_pos;
-			prev_x_cell = cur_x_cell;
-		}
-
-		if(!y_collision){
-			xy_pos[1] = y_new_pos;
-			prev_y_cell = cur_y_cell;
-		}
+//		if(prev_x_cell == -1){
+//			prev_x_cell = cur_x_cell;
+//			prev_y_cell = cur_y_cell;
+//			continue;
+//		}else{
+//			if(prev_x_cell != cur_x_cell){
+//				int dif = cur_x_cell - prev_x_cell;
+//				if(dif == 1){
+//					if(maze[prev_x_cell][cur_y_cell].right){
+//						//collision
+//						x_collision = 1;
+//						xy_pos[0] = (cur_x_cell * maze_config.cell_size);
+//						osEventFlagsSet(event_group_id, COLLISION_X);
+//					}
+//				}else if(dif == -1){
+//					if(maze[cur_x_cell][cur_y_cell].right){
+//						//collision
+//						x_collision = 1;
+//						xy_pos[0] = (prev_x_cell * maze_config.cell_size) + 2*radius;
+//						osEventFlagsSet(event_group_id, COLLISION_X);
+//					}
+//				}else{
+////					while(1);
+//
+//				}
+//			}
+//
+//			if(prev_y_cell != cur_y_cell){
+//				int dif = cur_y_cell - prev_y_cell;
+//				if(dif == 1){
+//					if(maze[cur_x_cell][prev_y_cell].top){
+//						//collision
+//						y_collision = 1;
+//						xy_pos[1] = (cur_y_cell * maze_config.cell_size);
+//						osEventFlagsSet(event_group_id, COLLISION_Y);
+//					}
+//				}else if(dif == -1){
+//					if(maze[cur_x_cell][cur_y_cell].top){
+//						//collision
+//						y_collision = 1;
+//						xy_pos[1] = (prev_y_cell * maze_config.cell_size) + radius + 1;
+//						osEventFlagsSet(event_group_id, COLLISION_Y);
+//					}
+//				}else{
+////					while(1);
+//				}
+//			}
+//
+//		}
+//
+//
+//		if(!x_collision){
+//			xy_pos[0] = x_new_pos;
+//			prev_x_cell = cur_x_cell;
+//		}
+//
+//		if(!y_collision){
+//			xy_pos[1] = y_new_pos;
+//			prev_y_cell = cur_y_cell;
+//		}
 
 //		prev_x_cell = xy_pos[0]/maze_config.cell_size;
 //		prev_y_cell = xy_pos[1]/maze_config.cell_size;
@@ -436,7 +534,7 @@ void lcd_display_task(void* arg){
 		lcd_draw_maze();
 		read_xy_position(xy_pos);
 
-		LCD_Draw_Circle_Fill((int)xy_pos[0] - radius, (int)xy_pos[1] - radius, radius, LCD_COLOR_BLACK);
+		LCD_Draw_Circle_Fill((int)xy_pos[0], (int)xy_pos[1], radius, LCD_COLOR_BLACK);
 		osDelay(100);
 		LCD_Clear(0, LCD_COLOR_WHITE);
 	}
