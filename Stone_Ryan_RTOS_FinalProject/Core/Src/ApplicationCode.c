@@ -31,7 +31,8 @@ static osThreadId_t led_output_task_id;
 // ITC defines
 static osEventFlagsId_t event_group_id;
 static osSemaphoreId_t disruptor_sem_id;
-static osMutexId_t xy_direction_mutex_id;
+static osMutexId_t xy_pos_dif_mutex_id;
+static osMutexId_t xy_pos_mutex_id;
 
 RNG_HandleTypeDef* hrng_ptr;
 
@@ -39,7 +40,13 @@ RNG_HandleTypeDef* hrng_ptr;
 static struct{
 	double x;
 	double y;
-}xy_direction;
+//	double timestep;
+}xy_pos_dif;
+
+static struct{
+	double x;
+	double y;
+}xy_position;
 
 static struct Cell** maze;
 
@@ -67,8 +74,11 @@ void ApplicationInit(RNG_HandleTypeDef* hrng){
     disruptor_sem_id = osSemaphoreNew(1, 0, NULL);
     if(disruptor_sem_id == NULL) while(1);
 
-    xy_direction_mutex_id = osMutexNew(NULL);
-    if(xy_direction_mutex_id == NULL) while(1);
+    xy_pos_dif_mutex_id = osMutexNew(NULL);
+    if(xy_pos_dif_mutex_id == NULL) while(1);
+
+    xy_pos_mutex_id = osMutexNew(NULL);
+    if(xy_pos_mutex_id == NULL) while(1);
 
     // task init
     disruptor_task_id = osThreadNew(disruptor_task, (void*)0, NULL);
@@ -87,22 +97,40 @@ void ApplicationInit(RNG_HandleTypeDef* hrng){
     if(led_output_task_id == NULL) while(1);
 }
 
-void read_xy_direction(double* xy){
-	osMutexAcquire(xy_direction_mutex_id, osWaitForever);
+void read_xy_pos_dif(double* xy){
+	osMutexAcquire(xy_pos_dif_mutex_id, osWaitForever);
 
-	xy[0] = xy_direction.x;
-	xy[1] = xy_direction.y;
+	xy[0] = xy_pos_dif.x;
+	xy[1] = xy_pos_dif.y;
 
-	osMutexRelease(xy_direction_mutex_id);
+	osMutexRelease(xy_pos_dif_mutex_id);
 }
 
-void write_xy_direction(double* xy){
-	osMutexAcquire(xy_direction_mutex_id, osWaitForever);
+void write_xy_pos_dif(double* xy){
+	osMutexAcquire(xy_pos_dif_mutex_id, osWaitForever);
 
-	xy_direction.x = xy[0];
-	xy_direction.y = xy[1];
+	xy_pos_dif.x = xy[0];
+	xy_pos_dif.y = xy[1];
 
-	osMutexRelease(xy_direction_mutex_id);
+	osMutexRelease(xy_pos_dif_mutex_id);
+}
+
+void read_xy_position(double* xy){
+	osMutexAcquire(xy_pos_mutex_id, osWaitForever);
+
+	xy[0] = xy_position.x;
+	xy[1] = xy_position.y;
+
+	osMutexRelease(xy_pos_mutex_id);
+}
+
+void write_xy_position(double* xy){
+	osMutexAcquire(xy_pos_mutex_id, osWaitForever);
+
+	xy_position.x = xy[0];
+	xy_position.y = xy[1];
+
+	osMutexRelease(xy_pos_mutex_id);
 }
 
 void EXTI0_IRQHandler(){
@@ -142,6 +170,7 @@ void gyro_polling_task(void* arg){
 	double T = 0.02;
 	float rads_ratio = 0.017453;
 	double gyro_sensitivity = 17.50;
+	double conversion_const = (rads_ratio * gyro_sensitivity)/1000;
 
 	double xy_pos[2];
 
@@ -164,14 +193,17 @@ void gyro_polling_task(void* arg){
 	double x_dif = 0;
 	double y_dif = 0;
 	while(1){
+		// no idea why this is functional when backwards
 		y_read = Gyro_Get_X_Velocity();
 		x_read = Gyro_Get_Y_Velocity();
 
 		if(x_read <= zero_range && x_read >= -zero_range) x_read = 0;
 		if(y_read <= zero_range && y_read >= -zero_range) y_read = 0;
 
-		x_rads_per_sec = (x_read * rads_ratio * gyro_sensitivity)/1000;
-		y_rads_per_sec = (y_read * rads_ratio * gyro_sensitivity)/1000;
+//		x_rads_per_sec = (x_read * rads_ratio * gyro_sensitivity)/1000;
+//		y_rads_per_sec = (y_read * rads_ratio * gyro_sensitivity)/1000;
+		x_rads_per_sec = x_read * conversion_const;
+		y_rads_per_sec = y_read * conversion_const;
 
 		x_rads += x_rads_per_sec * T;
 		y_rads += y_rads_per_sec * T;
@@ -179,18 +211,20 @@ void gyro_polling_task(void* arg){
 		x_accel = physics.gravity * sin(x_rads);
 		y_accel = physics.gravity * sin(y_rads);
 
-		// if x or y collides with an object, reset its velocity.
+		// if x or y collides with an object, reset its velocity. TRY ACCELL INSTEAD?
 		uint32_t flags = osEventFlagsGet(event_group_id);
 		if(flags & COLLISION_X){
 			osEventFlagsClear(event_group_id, COLLISION_X);
 //			modify position somehow
-			x_pos = x_prev;
+//			x_pos = x_prev;
 			x_velocity = 0;
+			x_accel = 0;
 		}
 
 		if(flags & COLLISION_Y){
 			osEventFlagsClear(event_group_id, COLLISION_Y);
-			y_pos = y_prev;
+//			y_pos = y_prev;
+			y_accel = 0;
 			y_velocity = 0;
 		}
 
@@ -206,7 +240,7 @@ void gyro_polling_task(void* arg){
 		xy_pos[0] = x_dif;
 		xy_pos[1] = y_dif;
 
-		write_xy_direction(xy_pos);
+		write_xy_pos_dif(xy_pos);
 
 		x_prev = x_pos;
 		y_prev = y_pos;
@@ -230,7 +264,7 @@ void generate_maze(void){
 	for(int i=0; i<maze_config.size->width; i++) {
 	    maze[i] = malloc(sizeof(Cell) * maze_config.size->height);
 	}
-
+//	bool hard_edged = maze_config.hard_edged;
 	uint32_t rand;
 	for(int i=0; i<maze_config.size->width; i++){
 		for(int j=0; j<maze_config.size->height; j++){
@@ -238,6 +272,7 @@ void generate_maze(void){
 			osStatus_t status = HAL_RNG_GenerateRandomNumber(hrng_ptr, &rand);
 			if(status != osOK) while(1);
 			maze[i][j].top = rand % 2;
+
 			status = HAL_RNG_GenerateRandomNumber(hrng_ptr, &rand);
 			if(status != osOK) while(1);
 			maze[i][j].right = rand % 2;
@@ -253,25 +288,45 @@ void game_comp_task(void* arg){
 
 	osEventFlagsSet(event_group_id, MAZE_GENERATED);
 
+	double xy_dif[2];
+	double xy_pos[2];
+
+	//add random logic later
+	// ball spawn pos
+	xy_pos[0] = LCD_PIXEL_WIDTH/2;
+	xy_pos[1] = LCD_PIXEL_HEIGHT/2;
+	write_xy_position(xy_pos);
+
 //	while(1){
+//		read_xy_pos_dif(xy_dif);
+//		xy_pos[0] += xy_dif[0];
+//		xy_pos[1] += xy_dif[1];
+//		write_xy_position(xy_pos);
 //		osDelay(100);
 //	}
 
-	double xy[2];
+//	double T = 0.02;
 //	double x_pos, y_pos;
-	double x_pos = LCD_PIXEL_WIDTH/2;
-	double y_pos = LCD_PIXEL_HEIGHT/2;
+	double x_new_pos, y_new_pos;
 	int prev_x_cell = -1;
 	int prev_y_cell = -1;
-
+	int x_collision, y_collision;
+	int radius = drone.diameter/2;
 	while(1){
-		read_xy_direction(xy);
+		x_collision = 0;
+		y_collision = 0;
+		read_xy_pos_dif(xy_dif);
 
-		x_pos += xy[0];
-		y_pos += xy[1];
+//		x_vel = xy_vel[0];
+//		y_vel = xy_vel[1];
 
-		int cur_x_cell = x_pos/maze_config.cell_size;
-		int cur_y_cell = y_pos/maze_config.cell_size;
+		read_xy_position(xy_pos);
+
+		x_new_pos = xy_dif[0] + xy_pos[0];
+		y_new_pos = xy_dif[1] + xy_pos[1];
+
+		int cur_x_cell = x_new_pos/maze_config.cell_size;
+		int cur_y_cell = y_new_pos/maze_config.cell_size;
 
 		if(prev_x_cell == -1){
 			prev_x_cell = cur_x_cell;
@@ -283,15 +338,20 @@ void game_comp_task(void* arg){
 				if(dif == 1){
 					if(maze[prev_x_cell][cur_y_cell].right){
 						//collision
+						x_collision = 1;
+						xy_pos[0] = (cur_x_cell * maze_config.cell_size);
 						osEventFlagsSet(event_group_id, COLLISION_X);
 					}
 				}else if(dif == -1){
 					if(maze[cur_x_cell][cur_y_cell].right){
 						//collision
+						x_collision = 1;
+						xy_pos[0] = (prev_x_cell * maze_config.cell_size) + 2*radius;
 						osEventFlagsSet(event_group_id, COLLISION_X);
 					}
 				}else{
 //					while(1);
+
 				}
 			}
 
@@ -300,11 +360,15 @@ void game_comp_task(void* arg){
 				if(dif == 1){
 					if(maze[cur_x_cell][prev_y_cell].top){
 						//collision
+						y_collision = 1;
+						xy_pos[1] = (cur_y_cell * maze_config.cell_size);
 						osEventFlagsSet(event_group_id, COLLISION_Y);
 					}
 				}else if(dif == -1){
 					if(maze[cur_x_cell][cur_y_cell].top){
 						//collision
+						y_collision = 1;
+						xy_pos[1] = (prev_y_cell * maze_config.cell_size) + radius + 1;
 						osEventFlagsSet(event_group_id, COLLISION_Y);
 					}
 				}else{
@@ -314,23 +378,24 @@ void game_comp_task(void* arg){
 
 		}
 
-//		for(int i=-1; i<2; i++){
-//			for(int j=-1; j<2; i++){
-//				if(cur_x_cell + i >= 0 && cur_x_cell + i < maze_config.size->width){
-//					// cell is within the maze. Check if walls are within collision proximity.
-//				}
-//				if(cur_y_cell + i >= 0 && cur_y_cell + i < maze_config.size->height){
-//					// cell is within the maze. Check if walls are within collision proximity.
-//				}
-//			}
-//		}
 
+		if(!x_collision){
+			xy_pos[0] = x_new_pos;
+			prev_x_cell = cur_x_cell;
+		}
+
+		if(!y_collision){
+			xy_pos[1] = y_new_pos;
+			prev_y_cell = cur_y_cell;
+		}
+
+//		prev_x_cell = xy_pos[0]/maze_config.cell_size;
+//		prev_y_cell = xy_pos[1]/maze_config.cell_size;
+
+		write_xy_position(xy_pos);
 
 		osDelay(100);
 	}
-
-	// then handle game inputs and outputs
-
 }
 
 void lcd_draw_maze(void){
@@ -357,7 +422,6 @@ void lcd_display_task(void* arg){
 	LCD_Clear(0, LCD_COLOR_WHITE);
 	LCD_SetTextColor(LCD_COLOR_BLACK);
 	LCD_SetFont(&Font16x24);
-
 	osEventFlagsWait(event_group_id, MAZE_GENERATED, osFlagsWaitAny, osWaitForever);
 
 //	while(1){
@@ -366,19 +430,13 @@ void lcd_display_task(void* arg){
 
 	int radius = drone.diameter/2;
 	double xy_pos[2];
-	double x_pos, y_pos;
-	x_pos = LCD_PIXEL_WIDTH/2;
-	y_pos = LCD_PIXEL_HEIGHT/2;
+//	double x_pos, y_pos;
+
 	while(1){
 		lcd_draw_maze();
-		read_xy_direction(xy_pos);
-		x_pos += xy_pos[0];
-		y_pos += xy_pos[1];
+		read_xy_position(xy_pos);
 
-//		if(x_pos >= LCD_PIXEL_WIDTH - radius || x_pos < radius) x_pos = LCD_PIXEL_WIDTH/2;
-//		if(y_pos >= LCD_PIXEL_HEIGHT - radius || y_pos < radius) y_pos = LCD_PIXEL_HEIGHT/2;
-
-		LCD_Draw_Circle_Fill((int)x_pos, (int)y_pos, radius, LCD_COLOR_BLACK);
+		LCD_Draw_Circle_Fill((int)xy_pos[0] - radius, (int)xy_pos[1] - radius, radius, LCD_COLOR_BLACK);
 		osDelay(100);
 		LCD_Clear(0, LCD_COLOR_WHITE);
 	}

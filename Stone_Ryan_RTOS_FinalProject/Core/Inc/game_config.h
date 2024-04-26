@@ -39,12 +39,12 @@ struct{
 	struct Disruptor* disruptor;
 	struct Energy_Store* energy_store;
 	int diameter;
-}drone = {&disruptor_, &energy_store_, 10};
+}drone = {&disruptor_, &energy_store_, 8};
 
 struct Size{
 	int width;
 	int height;
-}size_ = {15, 15};
+}size_ = {16, 21};
 
 struct Obstacle_Probability{
 	int wall;
