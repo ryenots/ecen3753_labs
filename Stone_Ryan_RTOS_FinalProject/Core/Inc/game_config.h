@@ -68,7 +68,7 @@ struct Holes{
 	int number;
 	int diameter;
 	xy_pair* locations_list;
-}holes_ = {4, 12, NULL};
+}holes_ = {12, 12, NULL};
 
 struct{
 	int time_to_complete;

@@ -19,6 +19,7 @@
 #define COLLISION_Y		 0x00000008
 #define DISRUPTOR_STATE  0x00000010
 #define DISRUPTOR_WAIT   0x00000020
+#define GAME_RESET		 0x00000040
 
 
 /* Static variables */
@@ -261,8 +262,6 @@ void gyro_polling_task(void* arg){
 		if(x_read <= zero_range && x_read >= -zero_range) x_read = 0;
 		if(y_read <= zero_range && y_read >= -zero_range) y_read = 0;
 
-//		x_rads_per_sec = (x_read * rads_ratio * gyro_sensitivity)/1000;
-//		y_rads_per_sec = (y_read * rads_ratio * gyro_sensitivity)/1000;
 		x_rads_per_sec = x_read * conversion_const;
 		y_rads_per_sec = y_read * conversion_const;
 
@@ -276,15 +275,20 @@ void gyro_polling_task(void* arg){
 		uint32_t flags = osEventFlagsGet(event_group_id);
 		if(flags & COLLISION_X){
 			osEventFlagsClear(event_group_id, COLLISION_X);
-//			modify position somehow
-//			x_pos = x_prev;
 			x_velocity = 0;
 			x_accel = 0;
 		}
 
 		if(flags & COLLISION_Y){
 			osEventFlagsClear(event_group_id, COLLISION_Y);
-//			y_pos = y_prev;
+			y_velocity = 0;
+			y_accel = 0;
+		}
+
+		if(flags & GAME_RESET){
+//			osEventFlagsClear(event_group_id, GAME_RESET);
+			x_velocity = 0;
+			x_accel = 0;
 			y_velocity = 0;
 			y_accel = 0;
 		}
@@ -414,133 +418,158 @@ void generate_features(void){
 void game_comp_task(void* arg){
 	(void) &arg;
 
-	// generate maze first
-	generate_maze();
-	generate_features();
-	double xy_dif[4];
-	double xy_pos[2];
 
-	// random ball spawn location
-	uint32_t rand;
-	HAL_RNG_GenerateRandomNumber(hrng_ptr, &rand);
-	xy_pos[0] = (rand % maze_config.size->width)*maze_config.cell_size + maze_config.cell_size/2;
-	HAL_RNG_GenerateRandomNumber(hrng_ptr, &rand);
-	xy_pos[1] = (rand % maze_config.size->width)*maze_config.cell_size + maze_config.cell_size/2;
-
-	write_xy_position(xy_pos);
-	osEventFlagsSet(event_group_id, MAZE_GENERATED);
-
-//	while(1){
-//		read_xy_pos_dif(xy_dif);
-//		xy_pos[0] += xy_dif[0];
-//		xy_pos[1] += xy_dif[1];
-//		write_xy_position(xy_pos);
-//		osDelay(100);
-//	}
-	bool walls[4];
-	int x_collision, y_collision;
-	int radius = drone.diameter/2;
-	int cell_size = maze_config.cell_size;
-	double x_sub_pos, y_sub_pos;
-	double x_prev_pos_dif = 0;
-	double y_prev_pos_dif = 0;
-	uint32_t flags;
-	bool disruptor_activated = false;
 	while(1){
-		flags = osEventFlagsGet(event_group_id);
-		if(flags & DISRUPTOR_STATE){
-			xy_pos[0] += x_prev_pos_dif;
-			xy_pos[1] += y_prev_pos_dif;
+		osEventFlagsClear(event_group_id, GAME_RESET);
 
-			disruptor_activated = true;
-		}else{
-			x_collision = 0;
-			y_collision = 0;
-			read_xy_pos_dif(xy_dif);
-			read_xy_position(xy_pos);
-			x_prev_pos_dif = xy_dif[0];
-			y_prev_pos_dif = xy_dif[1];
+		// generate maze first
+		generate_maze();
+		generate_features();
+		double xy_dif[4];
+		double xy_pos[2];
 
+		// random ball spawn location
+		uint32_t rand;
+		HAL_RNG_GenerateRandomNumber(hrng_ptr, &rand);
+		xy_pos[0] = (rand % maze_config.size->width)*maze_config.cell_size + maze_config.cell_size/2;
+		HAL_RNG_GenerateRandomNumber(hrng_ptr, &rand);
+		xy_pos[1] = (rand % maze_config.size->width)*maze_config.cell_size + maze_config.cell_size/2;
 
-			int cur_x_cell = xy_pos[0]/cell_size;
-			int cur_y_cell = xy_pos[1]/cell_size;
-
-			// left, right, top, bottom
-			get_nearby_walls(cur_x_cell, cur_y_cell, walls);
-
-			// future optimization: dont do calculations for cells that dont have walls
-			// OR if we are not headed in the direction of the wall (use +- velocity)
-			x_sub_pos = fmod(xy_pos[0], cell_size);
-			y_sub_pos = fmod(xy_pos[1], cell_size);
-
-			if(disruptor_activated){
-				// do something to teleport out of walls
-//				int radius = drone.diameter/2;
-//				int board_height = maze_config.cell_size * maze_config.size->height;
-//				int board_width = maze_config.cell_size * maze_config.size->width;
-//				while((x_sub_pos < radius || y_sub_pos < radius) && xy_pos[0] >= 0 && xy_pos[0] < board_width && xy_pos[1] >= radius && xy_pos[1] < board_height + radius){
-//					xy_pos[0] += x_prev_pos_dif;
-//					xy_pos[1] += y_prev_pos_dif;
-//				}
-//				write_xy_position(xy_pos);
-				disruptor_activated = false;
-			}
-			if(xy_dif[2] < 0 && walls[0]){
-				// negative x velocity
-				if(x_sub_pos + xy_dif[0] - radius < 0){
-					// x left wall collision
-					osEventFlagsSet(event_group_id, COLLISION_X);
-					x_collision = 1;
-				}
-
-			}else if(xy_dif[2] > 0 && walls[1]){
-				// positive x velocity
-				if(x_sub_pos + xy_dif[0] + radius > cell_size){
-					// x right wall collision
-					// in this case, ignore any more positive position changes in x direction?
-					// until something happens....?
-					// until x becomes negative velocity, OR Y leaves this cell?
-					osEventFlagsSet(event_group_id, COLLISION_X);
-					x_collision = 1;
-				}
-			}
-
-			if(xy_dif[3] < 0 && walls[2]){
-				// negative y velocity
-				if(y_sub_pos + xy_dif[1] - radius < 0){
-					// y top wall collision
-					osEventFlagsSet(event_group_id, COLLISION_Y);
-					y_collision = 1;
-				}
-
-			}else if(xy_dif[3] > 0 && walls[3]){
-				// positive y velocity
-				if(y_sub_pos + xy_dif[1] + radius > cell_size){
-					// y bottom wall collision
-					osEventFlagsSet(event_group_id, COLLISION_Y);
-					y_collision = 1;
-				}
-			}
-
-			if(!x_collision) xy_pos[0] += xy_dif[0];
-			if(!y_collision) xy_pos[1] += xy_dif[1];
-
-
-		}
-		// euclidean distance of each waypoint to determine if collected.
-		double distance;
-		xy_pair* loc_list = maze_config.waypoints->locations_list;
-		for(int i=0; i<maze_config.waypoints->number; i++){
-			if(!loc_list[i].collected){
-				distance = sqrt(pow(loc_list[i].x - xy_pos[0], 2) + pow(loc_list[i].y - xy_pos[1], 2));
-				if(distance < radius + 1){
-					loc_list[i].collected = true;
-				}
-			}
-		}
 		write_xy_position(xy_pos);
+		osEventFlagsSet(event_group_id, MAZE_GENERATED);
 
-		osDelay(100);
+	//	while(1){
+	//		read_xy_pos_dif(xy_dif);
+	//		xy_pos[0] += xy_dif[0];
+	//		xy_pos[1] += xy_dif[1];
+	//		write_xy_position(xy_pos);
+	//		osDelay(100);
+	//	}
+		bool walls[4];
+		int x_collision, y_collision;
+		int radius = drone.diameter/2;
+		int cell_size = maze_config.cell_size;
+		double x_sub_pos, y_sub_pos;
+		double x_prev_pos_dif = 0;
+		double y_prev_pos_dif = 0;
+		uint32_t flags;
+		bool disruptor_activated = false;
+		while(1){
+			flags = osEventFlagsGet(event_group_id);
+			if(flags & DISRUPTOR_STATE){
+				xy_pos[0] += x_prev_pos_dif;
+				xy_pos[1] += y_prev_pos_dif;
+
+				disruptor_activated = true;
+			}else{
+				x_collision = 0;
+				y_collision = 0;
+				read_xy_pos_dif(xy_dif);
+				read_xy_position(xy_pos);
+				x_prev_pos_dif = xy_dif[0];
+				y_prev_pos_dif = xy_dif[1];
+
+
+				int cur_x_cell = xy_pos[0]/cell_size;
+				int cur_y_cell = xy_pos[1]/cell_size;
+
+				// left, right, top, bottom
+				get_nearby_walls(cur_x_cell, cur_y_cell, walls);
+
+				// future optimization: dont do calculations for cells that dont have walls
+				// OR if we are not headed in the direction of the wall (use +- velocity)
+				x_sub_pos = fmod(xy_pos[0], cell_size);
+				y_sub_pos = fmod(xy_pos[1], cell_size);
+
+				if(disruptor_activated){
+					// do something to teleport out of walls
+	//				int radius = drone.diameter/2;
+	//				int board_height = maze_config.cell_size * maze_config.size->height;
+	//				int board_width = maze_config.cell_size * maze_config.size->width;
+	//				while((x_sub_pos < radius || y_sub_pos < radius) && xy_pos[0] >= 0 && xy_pos[0] < board_width && xy_pos[1] >= radius && xy_pos[1] < board_height + radius){
+	//					xy_pos[0] += x_prev_pos_dif;
+	//					xy_pos[1] += y_prev_pos_dif;
+	//				}
+	//				write_xy_position(xy_pos);
+					disruptor_activated = false;
+				}
+				if(xy_dif[2] < 0 && walls[0]){
+					// negative x velocity
+					if(x_sub_pos + xy_dif[0] - radius < 0){
+						// x left wall collision
+						osEventFlagsSet(event_group_id, COLLISION_X);
+						x_collision = 1;
+					}
+
+				}else if(xy_dif[2] > 0 && walls[1]){
+					// positive x velocity
+					if(x_sub_pos + xy_dif[0] + radius > cell_size){
+						// x right wall collision
+						// in this case, ignore any more positive position changes in x direction?
+						// until something happens....?
+						// until x becomes negative velocity, OR Y leaves this cell?
+						osEventFlagsSet(event_group_id, COLLISION_X);
+						x_collision = 1;
+					}
+				}
+
+				if(xy_dif[3] < 0 && walls[2]){
+					// negative y velocity
+					if(y_sub_pos + xy_dif[1] - radius < 0){
+						// y top wall collision
+						osEventFlagsSet(event_group_id, COLLISION_Y);
+						y_collision = 1;
+					}
+
+				}else if(xy_dif[3] > 0 && walls[3]){
+					// positive y velocity
+					if(y_sub_pos + xy_dif[1] + radius > cell_size){
+						// y bottom wall collision
+						osEventFlagsSet(event_group_id, COLLISION_Y);
+						y_collision = 1;
+					}
+				}
+
+				if(!x_collision) xy_pos[0] += xy_dif[0];
+				if(!y_collision) xy_pos[1] += xy_dif[1];
+
+
+			}
+
+			write_xy_position(xy_pos);
+			// euclidean distance of each waypoint to determine if collected.
+			double distance;
+			xy_pair* loc_list = maze_config.waypoints->locations_list;
+			for(int i=0; i<maze_config.waypoints->number; i++){
+				if(!loc_list[i].collected){
+					distance = sqrt(pow(loc_list[i].x - xy_pos[0], 2) + pow(loc_list[i].y - xy_pos[1], 2));
+					if(distance < radius + 1){
+						loc_list[i].collected = true;
+					}
+				}
+			}
+
+			bool hole_traversed = false;
+			loc_list = maze_config.holes->locations_list;
+			for(int i=0; i<maze_config.holes->number; i++){
+				distance = sqrt(pow(loc_list[i].x - xy_pos[0], 2) + pow(loc_list[i].y - xy_pos[1], 2));
+				if(distance < radius){
+					hole_traversed = true;
+					break;
+				}
+			}
+
+			if(hole_traversed){
+				// game fail
+				osEventFlagsSet(event_group_id, GAME_RESET);
+				osEventFlagsClear(event_group_id, MAZE_GENERATED);
+				osDelay(3000);
+				// FAIL graphic
+				break;
+			}
+
+			osDelay(100);
+		}
 	}
 }
 
@@ -583,7 +612,6 @@ void lcd_display_task(void* arg){
 	LCD_Clear(0, LCD_COLOR_WHITE);
 	LCD_SetTextColor(LCD_COLOR_BLACK);
 	LCD_SetFont(&Font16x24);
-	osEventFlagsWait(event_group_id, MAZE_GENERATED, osFlagsWaitAny, osWaitForever);
 
 //	while(1){
 //		osDelay(100);
@@ -594,12 +622,15 @@ void lcd_display_task(void* arg){
 //	double x_pos, y_pos;
 
 	while(1){
+		osEventFlagsWait(event_group_id, MAZE_GENERATED, osFlagsNoClear, osWaitForever);
 		uint32_t flags = osEventFlagsGet(event_group_id);
 		bool disruptor_active = flags & DISRUPTOR_STATE;
-		if(disruptor_active){
-			LCD_Draw_Circle_Fill((int)xy_pos[0], (int)xy_pos[1], radius, LCD_COLOR_MAGENTA);
-		}else{
-			LCD_Draw_Circle_Fill((int)xy_pos[0], (int)xy_pos[1], radius, LCD_COLOR_BLUE);
+		if(!(flags & GAME_RESET)){
+			if(disruptor_active){
+				LCD_Draw_Circle_Fill((int)xy_pos[0], (int)xy_pos[1], radius, LCD_COLOR_MAGENTA);
+			}else{
+				LCD_Draw_Circle_Fill((int)xy_pos[0], (int)xy_pos[1], radius, LCD_COLOR_BLUE);
+			}
 		}
 
 		lcd_draw_maze(disruptor_active);
