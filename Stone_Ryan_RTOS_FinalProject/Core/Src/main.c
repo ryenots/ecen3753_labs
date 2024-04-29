@@ -150,6 +150,8 @@ int main(void)
   MX_TIM11_Init();
   /* USER CODE BEGIN 2 */
 
+  HAL_NVIC_EnableIRQ(EXTI0_IRQn);
+  HAL_NVIC_SetPriority(EXTI0_IRQn, 13, 13);
   ApplicationInit(&hrng);
   /* USER CODE END 2 */
 

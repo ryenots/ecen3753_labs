@@ -13,26 +13,50 @@
 
 #define TICKRATE 100
 
-#define DISRUPTOR_ACTIVE 0x00000001
+#define BTN_STATUS 		 0x00000001
 #define MAZE_GENERATED   0x00000002
 #define COLLISION_X		 0x00000004
 #define COLLISION_Y		 0x00000008
+#define DISRUPTOR_STATE  0x00000010
+#define DISRUPTOR_WAIT   0x00000020
 
 
 /* Static variables */
 
 // Task ids
 static osThreadId_t disruptor_task_id;
+static osThreadAttr_t disruptor_task_attr = {
+		.name = "disruptorTask"
+};
+
 static osThreadId_t gyro_polling_task_id;
+static osThreadAttr_t gyro_polling_task_attr = {
+		.name = "gyroPollingTask"
+};
+
 static osThreadId_t game_comp_task_id;
+static osThreadAttr_t game_comp_task_attr = {
+		.name = "gameCompTask"
+};
+
 static osThreadId_t lcd_display_task_id;
+static osThreadAttr_t lcd_display_task_attr = {
+		.name = "lcdDisplayTask"
+};
+
 static osThreadId_t led_output_task_id;
+static osThreadAttr_t led_output_task_attr = {
+		.name = "ledOutputTask"
+};
 
 // ITC defines
 static osEventFlagsId_t event_group_id;
 static osSemaphoreId_t disruptor_sem_id;
 static osMutexId_t xy_pos_dif_mutex_id;
 static osMutexId_t xy_pos_mutex_id;
+
+// Timer defines
+static osTimerId_t disruptor_timer_id;
 
 RNG_HandleTypeDef* hrng_ptr;
 
@@ -58,6 +82,7 @@ void gyro_polling_task(void* arg);
 void game_comp_task(void* arg);
 void lcd_display_task(void* arg);
 void led_output_task(void* arg);
+void disruptor_stop(void* arg);
 
 void ApplicationInit(RNG_HandleTypeDef* hrng){
 	initialise_monitor_handles(); // Allows printf functionality
@@ -81,20 +106,24 @@ void ApplicationInit(RNG_HandleTypeDef* hrng){
     xy_pos_mutex_id = osMutexNew(NULL);
     if(xy_pos_mutex_id == NULL) while(1);
 
+    // timer init
+    disruptor_timer_id = osTimerNew(disruptor_stop, osTimerOnce, (void*)0, NULL);
+    if(disruptor_timer_id == NULL) while(1);
+
     // task init
-    disruptor_task_id = osThreadNew(disruptor_task, (void*)0, NULL);
+    disruptor_task_id = osThreadNew(disruptor_task, (void*)0, &disruptor_task_attr);
     if(disruptor_task_id == NULL) while(1);
 
-    gyro_polling_task_id = osThreadNew(gyro_polling_task, (void*)0, NULL);
+    gyro_polling_task_id = osThreadNew(gyro_polling_task, (void*)0, &gyro_polling_task_attr);
     if(gyro_polling_task_id == NULL) while(1);
 
-    game_comp_task_id = osThreadNew(game_comp_task, (void*)0, NULL);
+    game_comp_task_id = osThreadNew(game_comp_task, (void*)0, &game_comp_task_attr);
     if(game_comp_task_id == NULL) while(1);
 
-    lcd_display_task_id = osThreadNew(lcd_display_task, (void*)0, NULL);
+    lcd_display_task_id = osThreadNew(lcd_display_task, (void*)0, &lcd_display_task_attr);
     if(lcd_display_task_id == NULL) while(1);
 
-    led_output_task_id = osThreadNew(led_output_task, (void*)0, NULL);
+    led_output_task_id = osThreadNew(led_output_task, (void*)0, &led_output_task_attr);//asd
     if(led_output_task_id == NULL) while(1);
 }
 
@@ -141,26 +170,53 @@ void write_xy_position(double* xy){
 void EXTI0_IRQHandler(){
 	HAL_NVIC_DisableIRQ(EXTI0_IRQn);
 	int btn_state = HAL_GPIO_ReadPin(USR_BTN_PORT, USR_BTN_PIN);
-
 	if(btn_state){
 		// rising edge
-		osEventFlagsSet(event_group_id, DISRUPTOR_ACTIVE);
+		osSemaphoreRelease(disruptor_sem_id);
+
 
 	}else{
 		// falling edge
-		osEventFlagsClear(event_group_id, DISRUPTOR_ACTIVE);
-
+		disruptor_stop((void*)0);
 	}
 
 	__HAL_GPIO_EXTI_CLEAR_FLAG(GPIO_PIN_0);
 	HAL_NVIC_EnableIRQ(EXTI0_IRQn);
 }
 
+static uint32_t stop;
+void disruptor_stop(void* arg){
+		if(osTimerIsRunning(disruptor_timer_id)) osTimerStop(disruptor_timer_id);
+		stop = osKernelGetTickCount();
+		osEventFlagsSet(event_group_id, DISRUPTOR_WAIT);
+		osEventFlagsClear(event_group_id, DISRUPTOR_STATE);
+}
+
 void disruptor_task(void* arg){
-	// start timer when button is pushed, with varying length (oneShot)
 	(void) &arg;
+	// start timer when button is pushed, with varying length (oneShot)
+	int energy = drone.energy_store->max_energy; //mJ
 	while(1){
-		osDelay(100);
+		osSemaphoreAcquire(disruptor_sem_id, osWaitForever);
+
+		int ticks_to_run = (energy / drone.energy_store->recharge_rate)*1000;
+		if(ticks_to_run >= drone.energy_store->recharge_rate){
+			uint32_t start = osKernelGetTickCount();
+			osTimerStart(disruptor_timer_id, ticks_to_run);
+			osEventFlagsSet(event_group_id, DISRUPTOR_STATE);
+
+			osEventFlagsWait(event_group_id, DISRUPTOR_WAIT, osFlagsWaitAny, osWaitForever);
+
+			int time_ran = stop - start;
+
+			energy -= time_ran;
+			if(energy < 0){
+				energy = 0;
+			}
+		}
+
+
+//		osDelay(100);
 	}
 
 }
@@ -229,8 +285,8 @@ void gyro_polling_task(void* arg){
 		if(flags & COLLISION_Y){
 			osEventFlagsClear(event_group_id, COLLISION_Y);
 //			y_pos = y_prev;
-			y_accel = 0;
 			y_velocity = 0;
+			y_accel = 0;
 		}
 
 		x_velocity += x_accel * T;
@@ -332,22 +388,47 @@ void get_nearby_walls(int x, int y, bool* walls){
 	walls[3] = bottom;
 }
 
+void generate_features(void){
+	uint32_t rand;
+	maze_config.waypoints->locations_list = malloc(sizeof(xy_pair) * maze_config.waypoints->number);
+	for(int i=0; i<maze_config.waypoints->number;i++){
+		HAL_RNG_GenerateRandomNumber(hrng_ptr, &rand);
+		maze_config.waypoints->locations_list[i].x = (rand % maze_config.size->width)*maze_config.cell_size + maze_config.cell_size/2;
+
+		HAL_RNG_GenerateRandomNumber(hrng_ptr, &rand);
+		maze_config.waypoints->locations_list[i].y = (rand % maze_config.size->height)*maze_config.cell_size + maze_config.cell_size/2;
+		maze_config.waypoints->locations_list[i].collected = false;
+	}
+
+	maze_config.holes->locations_list = malloc(sizeof(xy_pair) * maze_config.holes->number);
+	for(int i=0; i<maze_config.holes->number;i++){
+		HAL_RNG_GenerateRandomNumber(hrng_ptr, &rand);
+		maze_config.holes->locations_list[i].x = (rand % maze_config.size->width)*maze_config.cell_size + maze_config.cell_size/2;
+
+		HAL_RNG_GenerateRandomNumber(hrng_ptr, &rand);
+		maze_config.holes->locations_list[i].y = (rand % maze_config.size->height)*maze_config.cell_size + maze_config.cell_size/2;
+		maze_config.holes->locations_list[i].collected = false;
+	}
+}
+
 void game_comp_task(void* arg){
 	(void) &arg;
+
 	// generate maze first
-
 	generate_maze();
-
-	osEventFlagsSet(event_group_id, MAZE_GENERATED);
-
+	generate_features();
 	double xy_dif[4];
 	double xy_pos[2];
 
-	//add random logic later
-	// ball spawn pos
-	xy_pos[0] = (LCD_PIXEL_WIDTH/2)+8;
-	xy_pos[1] = LCD_PIXEL_HEIGHT/2;
+	// random ball spawn location
+	uint32_t rand;
+	HAL_RNG_GenerateRandomNumber(hrng_ptr, &rand);
+	xy_pos[0] = (rand % maze_config.size->width)*maze_config.cell_size + maze_config.cell_size/2;
+	HAL_RNG_GenerateRandomNumber(hrng_ptr, &rand);
+	xy_pos[1] = (rand % maze_config.size->width)*maze_config.cell_size + maze_config.cell_size/2;
+
 	write_xy_position(xy_pos);
+	osEventFlagsSet(event_group_id, MAZE_GENERATED);
 
 //	while(1){
 //		read_xy_pos_dif(xy_dif);
@@ -356,162 +437,144 @@ void game_comp_task(void* arg){
 //		write_xy_position(xy_pos);
 //		osDelay(100);
 //	}
-
-//	double T = 0.02;
-//	double x_pos, y_pos;
 	bool walls[4];
-	double x_new_pos, y_new_pos;
-	int prev_x_cell = -1;
-	int prev_y_cell = -1;
 	int x_collision, y_collision;
 	int radius = drone.diameter/2;
 	int cell_size = maze_config.cell_size;
+	double x_sub_pos, y_sub_pos;
+	double x_prev_pos_dif = 0;
+	double y_prev_pos_dif = 0;
+	uint32_t flags;
+	bool disruptor_activated = false;
 	while(1){
-		x_collision = 0;
-		y_collision = 0;
-		read_xy_pos_dif(xy_dif);
-		read_xy_position(xy_pos);
+		flags = osEventFlagsGet(event_group_id);
+		if(flags & DISRUPTOR_STATE){
+			xy_pos[0] += x_prev_pos_dif;
+			xy_pos[1] += y_prev_pos_dif;
 
-		x_new_pos = xy_dif[0] + xy_pos[0];
-		y_new_pos = xy_dif[1] + xy_pos[1];
+			disruptor_activated = true;
+		}else{
+			x_collision = 0;
+			y_collision = 0;
+			read_xy_pos_dif(xy_dif);
+			read_xy_position(xy_pos);
+			x_prev_pos_dif = xy_dif[0];
+			y_prev_pos_dif = xy_dif[1];
 
-		int cur_x_cell = xy_pos[0]/cell_size;
-		int cur_y_cell = xy_pos[1]/cell_size;
 
-		// left, right, top, bottom
-		get_nearby_walls(cur_x_cell, cur_y_cell, walls);
+			int cur_x_cell = xy_pos[0]/cell_size;
+			int cur_y_cell = xy_pos[1]/cell_size;
 
-		// future optimization: dont do calculations for cells that dont have walls OR if we are not headed in the direction of the wall (use +- velocity)
-		double x_sub_pos, y_sub_pos;
-		x_sub_pos = fmod(xy_pos[0], cell_size);
-		y_sub_pos = fmod(xy_pos[1], cell_size);
+			// left, right, top, bottom
+			get_nearby_walls(cur_x_cell, cur_y_cell, walls);
 
-		if(xy_dif[2] < 0 && walls[0]){
-			// negative x velocity
-			if(x_sub_pos + xy_dif[0] - radius < 0){
-				// x left wall collision
-				osEventFlagsSet(event_group_id, COLLISION_X);
-				x_collision = 1;
+			// future optimization: dont do calculations for cells that dont have walls
+			// OR if we are not headed in the direction of the wall (use +- velocity)
+			x_sub_pos = fmod(xy_pos[0], cell_size);
+			y_sub_pos = fmod(xy_pos[1], cell_size);
+
+			if(disruptor_activated){
+				// do something to teleport out of walls
+//				int radius = drone.diameter/2;
+//				int board_height = maze_config.cell_size * maze_config.size->height;
+//				int board_width = maze_config.cell_size * maze_config.size->width;
+//				while((x_sub_pos < radius || y_sub_pos < radius) && xy_pos[0] >= 0 && xy_pos[0] < board_width && xy_pos[1] >= radius && xy_pos[1] < board_height + radius){
+//					xy_pos[0] += x_prev_pos_dif;
+//					xy_pos[1] += y_prev_pos_dif;
+//				}
+//				write_xy_position(xy_pos);
+				disruptor_activated = false;
+			}
+			if(xy_dif[2] < 0 && walls[0]){
+				// negative x velocity
+				if(x_sub_pos + xy_dif[0] - radius < 0){
+					// x left wall collision
+					osEventFlagsSet(event_group_id, COLLISION_X);
+					x_collision = 1;
+				}
+
+			}else if(xy_dif[2] > 0 && walls[1]){
+				// positive x velocity
+				if(x_sub_pos + xy_dif[0] + radius > cell_size){
+					// x right wall collision
+					// in this case, ignore any more positive position changes in x direction?
+					// until something happens....?
+					// until x becomes negative velocity, OR Y leaves this cell?
+					osEventFlagsSet(event_group_id, COLLISION_X);
+					x_collision = 1;
+				}
 			}
 
-		}else if(xy_dif[2] > 0 && walls[1]){
-			// positive x velocity
-			if(x_sub_pos + xy_dif[0] + radius > cell_size){
-				// x right wall collision
-				// in this case, ignore any more positive position changes in x direction?
-				// until something happens....?
-				// until x becomes negative velocity, OR Y leaves this cell?
-				osEventFlagsSet(event_group_id, COLLISION_X);
-				x_collision = 1;
+			if(xy_dif[3] < 0 && walls[2]){
+				// negative y velocity
+				if(y_sub_pos + xy_dif[1] - radius < 0){
+					// y top wall collision
+					osEventFlagsSet(event_group_id, COLLISION_Y);
+					y_collision = 1;
+				}
+
+			}else if(xy_dif[3] > 0 && walls[3]){
+				// positive y velocity
+				if(y_sub_pos + xy_dif[1] + radius > cell_size){
+					// y bottom wall collision
+					osEventFlagsSet(event_group_id, COLLISION_Y);
+					y_collision = 1;
+				}
+			}
+
+			if(!x_collision) xy_pos[0] += xy_dif[0];
+			if(!y_collision) xy_pos[1] += xy_dif[1];
+
+
+		}
+		// euclidean distance of each waypoint to determine if collected.
+		double distance;
+		xy_pair* loc_list = maze_config.waypoints->locations_list;
+		for(int i=0; i<maze_config.waypoints->number; i++){
+			if(!loc_list[i].collected){
+				distance = sqrt(pow(loc_list[i].x - xy_pos[0], 2) + pow(loc_list[i].y - xy_pos[1], 2));
+				if(distance < radius + 1){
+					loc_list[i].collected = true;
+				}
 			}
 		}
-
-		if(xy_dif[3] < 0 && walls[2]){
-			// negative y velocity
-			if(y_sub_pos + xy_dif[1] - radius < 0){
-				// y top wall collision
-				osEventFlagsSet(event_group_id, COLLISION_Y);
-				y_collision = 1;
-			}
-
-		}else if(xy_dif[3] > 0 && walls[3]){
-			// positive y velocity
-			if(y_sub_pos + xy_dif[1] + radius > cell_size){
-				// y bottom wall collision
-				osEventFlagsSet(event_group_id, COLLISION_Y);
-				y_collision = 1;
-			}
-		}
-
-		if(!x_collision) xy_pos[0] += xy_dif[0];
-		if(!y_collision) xy_pos[1] += xy_dif[1];
-
-//		if(prev_x_cell == -1){
-//			prev_x_cell = cur_x_cell;
-//			prev_y_cell = cur_y_cell;
-//			continue;
-//		}else{
-//			if(prev_x_cell != cur_x_cell){
-//				int dif = cur_x_cell - prev_x_cell;
-//				if(dif == 1){
-//					if(maze[prev_x_cell][cur_y_cell].right){
-//						//collision
-//						x_collision = 1;
-//						xy_pos[0] = (cur_x_cell * maze_config.cell_size);
-//						osEventFlagsSet(event_group_id, COLLISION_X);
-//					}
-//				}else if(dif == -1){
-//					if(maze[cur_x_cell][cur_y_cell].right){
-//						//collision
-//						x_collision = 1;
-//						xy_pos[0] = (prev_x_cell * maze_config.cell_size) + 2*radius;
-//						osEventFlagsSet(event_group_id, COLLISION_X);
-//					}
-//				}else{
-////					while(1);
-//
-//				}
-//			}
-//
-//			if(prev_y_cell != cur_y_cell){
-//				int dif = cur_y_cell - prev_y_cell;
-//				if(dif == 1){
-//					if(maze[cur_x_cell][prev_y_cell].top){
-//						//collision
-//						y_collision = 1;
-//						xy_pos[1] = (cur_y_cell * maze_config.cell_size);
-//						osEventFlagsSet(event_group_id, COLLISION_Y);
-//					}
-//				}else if(dif == -1){
-//					if(maze[cur_x_cell][cur_y_cell].top){
-//						//collision
-//						y_collision = 1;
-//						xy_pos[1] = (prev_y_cell * maze_config.cell_size) + radius + 1;
-//						osEventFlagsSet(event_group_id, COLLISION_Y);
-//					}
-//				}else{
-////					while(1);
-//				}
-//			}
-//
-//		}
-//
-//
-//		if(!x_collision){
-//			xy_pos[0] = x_new_pos;
-//			prev_x_cell = cur_x_cell;
-//		}
-//
-//		if(!y_collision){
-//			xy_pos[1] = y_new_pos;
-//			prev_y_cell = cur_y_cell;
-//		}
-
-//		prev_x_cell = xy_pos[0]/maze_config.cell_size;
-//		prev_y_cell = xy_pos[1]/maze_config.cell_size;
-
 		write_xy_position(xy_pos);
 
 		osDelay(100);
 	}
 }
 
-void lcd_draw_maze(void){
+void lcd_draw_maze(bool disruptor_active){
+	int color = disruptor_active ? LCD_COLOR_GREY : LCD_COLOR_BLACK;
+	int cell_size = maze_config.cell_size;
 	for(int i=0; i<maze_config.size->width; i++){
 		for(int j=0; j<maze_config.size->height; j++){
 			if(maze[i][j].top){
-				LCD_Draw_Horizontal_Line(i*maze_config.cell_size, j*maze_config.cell_size, maze_config.cell_size, LCD_COLOR_BLACK);
+				LCD_Draw_Horizontal_Line(i*cell_size, j*cell_size, cell_size, color);
 			}
 
 			if(maze[i][j].right){
-				LCD_Draw_Vertical_Line(i*maze_config.cell_size + maze_config.cell_size, j*maze_config.cell_size, maze_config.cell_size, LCD_COLOR_BLACK);
+				LCD_Draw_Vertical_Line(i*cell_size + cell_size, j*cell_size, cell_size, color);
 			}
 		}
 	}
 
 	if(maze_config.hard_edged){
-		LCD_Draw_Vertical_Line(0, 0, maze_config.cell_size*maze_config.size->height, LCD_COLOR_BLACK);
-		LCD_Draw_Horizontal_Line(0, maze_config.cell_size*maze_config.size->height, maze_config.cell_size*maze_config.size->width, LCD_COLOR_BLACK);
+		LCD_Draw_Vertical_Line(0, 0, cell_size*maze_config.size->height, LCD_COLOR_BLACK);
+		LCD_Draw_Horizontal_Line(0, cell_size*maze_config.size->height, cell_size*maze_config.size->width, LCD_COLOR_BLACK);
+	}
+
+	// draw features
+	xy_pair* loc_list = maze_config.waypoints->locations_list;
+	for(int i=0; i<maze_config.waypoints->number; i++){
+		if(!maze_config.waypoints->locations_list[i].collected){
+			LCD_Draw_Circle_Fill(loc_list[i].x, loc_list[i].y, maze_config.waypoints->diameter/2, LCD_COLOR_RED);
+		}
+	}
+
+	loc_list = maze_config.holes->locations_list;
+	for(int i=0; i<maze_config.holes->number; i++){
+		LCD_Draw_Circle_Fill(loc_list[i].x, loc_list[i].y, maze_config.holes->diameter/2, LCD_COLOR_BLACK);
 	}
 }
 
@@ -531,10 +594,17 @@ void lcd_display_task(void* arg){
 //	double x_pos, y_pos;
 
 	while(1){
-		lcd_draw_maze();
+		uint32_t flags = osEventFlagsGet(event_group_id);
+		bool disruptor_active = flags & DISRUPTOR_STATE;
+		if(disruptor_active){
+			LCD_Draw_Circle_Fill((int)xy_pos[0], (int)xy_pos[1], radius, LCD_COLOR_MAGENTA);
+		}else{
+			LCD_Draw_Circle_Fill((int)xy_pos[0], (int)xy_pos[1], radius, LCD_COLOR_BLUE);
+		}
+
+		lcd_draw_maze(disruptor_active);
 		read_xy_position(xy_pos);
 
-		LCD_Draw_Circle_Fill((int)xy_pos[0], (int)xy_pos[1], radius, LCD_COLOR_BLACK);
 		osDelay(100);
 		LCD_Clear(0, LCD_COLOR_WHITE);
 	}
@@ -546,7 +616,3 @@ void led_output_task(void* arg){
 		osDelay(100);
 	}
 }
-
-//void LCD_Visual_Demo(void){
-//	visualDemo();
-//}

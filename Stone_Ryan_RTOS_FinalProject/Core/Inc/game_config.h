@@ -54,14 +54,21 @@ struct Obstacle_Probability{
 typedef struct {
 	int x;
 	int y;
+	bool collected; // only for waypoints, don't modify for holes.
 }xy_pair;
 
 struct Waypoints{
 	int number;
 	int diameter;
-	int reuse; // bool
+	bool reuse;
 	xy_pair* locations_list; // dynamic alloc this list
-}waypoints_ = {4, 90, 0, NULL};
+}waypoints_ = {4, 6, 0, NULL};
+
+struct Holes{
+	int number;
+	int diameter;
+	xy_pair* locations_list;
+}holes_ = {4, 12, NULL};
 
 struct{
 	int time_to_complete;
@@ -71,7 +78,8 @@ struct{
 	int hole_diameter;
 	int hard_edged;
 	struct Waypoints* waypoints;
-}maze_config = {30000, 15, &size_, &obstacle_probability_, 11, 1, &waypoints_};
+	struct Holes* holes;
+}maze_config = {30000, 15, &size_, &obstacle_probability_, 11, 1, &waypoints_, &holes_};
 
 typedef struct Cell{
 	bool top;
