@@ -181,7 +181,7 @@ void speed_setpoint_task(void* arg);
 void vehicle_direction_task(void* arg);
 void vehicle_monitor_task(void* arg);
 void dir_violation_timeout(void* arg);
-void led_output_task(void* arg);
+void green_led_task(void* arg);
 void lcd_display_task(void* arg);
 
 void ApplicationInit(void)
@@ -231,7 +231,7 @@ void ApplicationInit(void)
 	if(vehicle_monitor_task_id == NULL) while(1);
 
 	//Led output resources
-	led_output_task_id = osThreadNew(led_output_task, (void*)0, &led_output_attr);
+	led_output_task_id = osThreadNew(green_led_task, (void*)0, &led_output_attr);
 	if(led_output_task_id == NULL) while(1);
 
 	//Lcd display resources
@@ -438,7 +438,7 @@ void vehicle_monitor_task(void* arg){
  * ========================= LED Output Task =========================
  */
 
-void led_output_task(void* arg){
+void green_led_task(void* arg){
 	(void) &arg;
 	while(1){
 		uint32_t flags = osEventFlagsWait(vehicle_event_group, (DIRECTION_VIOLATION | DIRECTION_VIOLATION_CLEAR), osFlagsNoClear, osWaitForever);

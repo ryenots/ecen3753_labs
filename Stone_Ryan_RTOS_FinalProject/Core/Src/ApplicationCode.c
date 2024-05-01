@@ -11,15 +11,18 @@
 #include "Gyro_Driver.h"
 #include "stdlib.h"
 
-#define TICKRATE 100
+#define TICKRATE   100
+#define TOTAL_TIME 30000
 
 #define BTN_STATUS 		 0x00000001
 #define MAZE_GENERATED   0x00000002
 #define COLLISION_X		 0x00000004
 #define COLLISION_Y		 0x00000008
 #define DISRUPTOR_STATE  0x00000010
-#define DISRUPTOR_WAIT   0x00000020
-#define GAME_RESET		 0x00000040
+#define DISRUPTOR_END    0x00000020
+#define GAME_OVER_LOSS	 0x00000040
+#define GAME_OVER_WIN	 0x00000080
+#define GAME_RESET		 0x00000100
 
 
 /* Static variables */
@@ -45,19 +48,29 @@ static osThreadAttr_t lcd_display_task_attr = {
 		.name = "lcdDisplayTask"
 };
 
-static osThreadId_t led_output_task_id;
-static osThreadAttr_t led_output_task_attr = {
-		.name = "ledOutputTask"
+static osThreadId_t green_led_task_id;
+static osThreadAttr_t green_led_task_attr = {
+		.name = "greenLedTask"
+};
+
+static osThreadId_t red_led_task_id;
+static osThreadAttr_t red_led_task_attr = {
+		.name = "redLedTask"
 };
 
 // ITC defines
 static osEventFlagsId_t event_group_id;
-static osSemaphoreId_t disruptor_sem_id;
+static osSemaphoreId_t disruptor_start_sem_id;
+static osSemaphoreId_t disruptor_stop_sem_id;
 static osMutexId_t xy_pos_dif_mutex_id;
 static osMutexId_t xy_pos_mutex_id;
+static osMutexId_t disruptor_eng_id;
+static osMutexId_t game_time_mutex_id;
 
 // Timer defines
-static osTimerId_t disruptor_timer_id;
+static osTimerId_t disruptor_usage_timer_id;
+static osTimerId_t disruptor_recharge_timer_id;
+static osTimerId_t game_timer_id;
 
 RNG_HandleTypeDef* hrng_ptr;
 
@@ -76,14 +89,28 @@ static struct{
 
 static struct Cell** maze;
 
+static int disruptor_energy;
+static int game_score;
+static int game_time;
+
+static char* game_end_status[3][10] = {
+		{"YOU WIN!"},
+		{"YOU LOSE!"},
+		{"Total score: "}
+};
+
 extern void initialise_monitor_handles(void);
 
+void disruptor_timer_end(void* arg);
+void disruptor_recharge(void* arg);
+void game_time_decrement(void* arg);
 void disruptor_task(void* arg);
 void gyro_polling_task(void* arg);
 void game_comp_task(void* arg);
 void lcd_display_task(void* arg);
-void led_output_task(void* arg);
-void disruptor_stop(void* arg);
+void green_led_task(void* arg);
+void red_led_task(void* arg);
+
 
 void ApplicationInit(RNG_HandleTypeDef* hrng){
 	initialise_monitor_handles(); // Allows printf functionality
@@ -93,13 +120,18 @@ void ApplicationInit(RNG_HandleTypeDef* hrng){
     Gyro_Init();
 
     hrng_ptr = hrng;
+    disruptor_energy = drone.energy_store->max_energy;
+    game_score = 0;
 
     // ITC init
     event_group_id = osEventFlagsNew(NULL);
     if(event_group_id == NULL) while(1);
 
-    disruptor_sem_id = osSemaphoreNew(1, 0, NULL);
-    if(disruptor_sem_id == NULL) while(1);
+    disruptor_start_sem_id = osSemaphoreNew(1, 0, NULL);
+    if(disruptor_start_sem_id == NULL) while(1);
+
+    disruptor_stop_sem_id = osSemaphoreNew(1, 0, NULL);
+    if(disruptor_stop_sem_id == NULL) while(1);
 
     xy_pos_dif_mutex_id = osMutexNew(NULL);
     if(xy_pos_dif_mutex_id == NULL) while(1);
@@ -107,9 +139,21 @@ void ApplicationInit(RNG_HandleTypeDef* hrng){
     xy_pos_mutex_id = osMutexNew(NULL);
     if(xy_pos_mutex_id == NULL) while(1);
 
+    disruptor_eng_id = osMutexNew(NULL);
+    if(disruptor_eng_id == NULL) while(1);
+
+    game_time_mutex_id = osMutexNew(NULL);
+    if(game_time_mutex_id == NULL) while(1);
+
     // timer init
-    disruptor_timer_id = osTimerNew(disruptor_stop, osTimerOnce, (void*)0, NULL);
-    if(disruptor_timer_id == NULL) while(1);
+    disruptor_usage_timer_id = osTimerNew(disruptor_timer_end, osTimerOnce, (void*)0, NULL);
+    if(disruptor_usage_timer_id == NULL) while(1);
+
+    disruptor_recharge_timer_id = osTimerNew(disruptor_recharge, osTimerPeriodic, (void*)0, NULL);
+    if(disruptor_recharge_timer_id == NULL) while(1);
+
+    game_timer_id = osTimerNew(game_time_decrement, osTimerPeriodic, (void*)0, NULL);
+    if(game_timer_id == NULL) while(1);
 
     // task init
     disruptor_task_id = osThreadNew(disruptor_task, (void*)0, &disruptor_task_attr);
@@ -124,8 +168,11 @@ void ApplicationInit(RNG_HandleTypeDef* hrng){
     lcd_display_task_id = osThreadNew(lcd_display_task, (void*)0, &lcd_display_task_attr);
     if(lcd_display_task_id == NULL) while(1);
 
-    led_output_task_id = osThreadNew(led_output_task, (void*)0, &led_output_task_attr);//asd
-    if(led_output_task_id == NULL) while(1);
+    green_led_task_id = osThreadNew(green_led_task, (void*)0, &green_led_task_attr);
+    if(green_led_task_id == NULL) while(1);
+
+    red_led_task_id = osThreadNew(red_led_task, (void*)0, &red_led_task_attr);
+    if(red_led_task_id == NULL) while(1);
 }
 
 void read_xy_pos_dif(double* xy){
@@ -173,61 +220,102 @@ void EXTI0_IRQHandler(){
 	int btn_state = HAL_GPIO_ReadPin(USR_BTN_PORT, USR_BTN_PIN);
 	if(btn_state){
 		// rising edge
-		osSemaphoreRelease(disruptor_sem_id);
+		osSemaphoreRelease(disruptor_start_sem_id);
 
 
 	}else{
 		// falling edge
-		disruptor_stop((void*)0);
+		uint32_t flags = osEventFlagsGet(event_group_id);
+		if(flags & DISRUPTOR_STATE) osEventFlagsSet(event_group_id, DISRUPTOR_END);
+//		disruptor_stop((void*)0);
 	}
 
 	__HAL_GPIO_EXTI_CLEAR_FLAG(GPIO_PIN_0);
 	HAL_NVIC_EnableIRQ(EXTI0_IRQn);
 }
 
-static uint32_t stop;
-void disruptor_stop(void* arg){
-		if(osTimerIsRunning(disruptor_timer_id)) osTimerStop(disruptor_timer_id);
-		stop = osKernelGetTickCount();
-		osEventFlagsSet(event_group_id, DISRUPTOR_WAIT);
-		osEventFlagsClear(event_group_id, DISRUPTOR_STATE);
+void read_disruptor_energy(int* energy){
+	osMutexAcquire(disruptor_eng_id, osWaitForever);
+
+	*energy = disruptor_energy;
+
+	osMutexRelease(disruptor_eng_id);
+}
+
+void write_disruptor_energy(int energy){
+	osMutexAcquire(disruptor_eng_id, osWaitForever);
+
+//	disruptor_energy = energy;
+	if(energy >= drone.energy_store->max_energy){
+		disruptor_energy = drone.energy_store->max_energy;
+	}else if(energy <= 0){
+		disruptor_energy = 0;
+	}else{
+		disruptor_energy = energy;
+	}
+
+	osMutexRelease(disruptor_eng_id);
+}
+
+void disruptor_recharge(void* arg){
+	int energy;
+	uint32_t flags = osEventFlagsGet(event_group_id);
+	if(!(flags & DISRUPTOR_STATE)){
+		read_disruptor_energy(&energy);
+		write_disruptor_energy(energy + drone.energy_store->recharge_rate/10);
+	}
+}
+
+void disruptor_timer_end(void* arg){
+	(void) &arg;
+	osEventFlagsSet(event_group_id, DISRUPTOR_END);
 }
 
 void disruptor_task(void* arg){
 	(void) &arg;
-	// start timer when button is pushed, with varying length (oneShot)
-	int energy = drone.energy_store->max_energy; //mJ
+	// start timer when button is pushed, with varying length
+	int energy;
+	uint32_t flags, start, stop;
+	write_disruptor_energy(drone.energy_store->max_energy); //mJ
+	osTimerStart(disruptor_recharge_timer_id, 100);
 	while(1){
-		osSemaphoreAcquire(disruptor_sem_id, osWaitForever);
+		osSemaphoreAcquire(disruptor_start_sem_id, osWaitForever);
+		while(1){
+			flags = osEventFlagsGet(event_group_id);
+			if(!(flags & DISRUPTOR_STATE)){
+				// button pushed down
+				read_disruptor_energy(&energy);
+				int ticks_to_run = (energy / drone.energy_store->recharge_rate)*1000;
+				if(ticks_to_run >= drone.disruptor->min_activation_energy){
+					start = osKernelGetTickCount();
+					osTimerStart(disruptor_usage_timer_id, ticks_to_run);
+					osEventFlagsSet(event_group_id, DISRUPTOR_STATE);
+				}else{
+					break;
+				}
 
-		int ticks_to_run = (energy / drone.energy_store->recharge_rate)*1000;
-		if(ticks_to_run >= drone.energy_store->recharge_rate){
-			uint32_t start = osKernelGetTickCount();
-			osTimerStart(disruptor_timer_id, ticks_to_run);
-			osEventFlagsSet(event_group_id, DISRUPTOR_STATE);
-
-			osEventFlagsWait(event_group_id, DISRUPTOR_WAIT, osFlagsWaitAny, osWaitForever);
-
-			int time_ran = stop - start;
-
-			energy -= time_ran;
-			if(energy < 0){
-				energy = 0;
+			}else{
+				// check for event flag WAIT
+				if(flags & DISRUPTOR_END){
+					if(osTimerIsRunning(disruptor_usage_timer_id)) osTimerStop(disruptor_usage_timer_id);
+					stop = osKernelGetTickCount();
+					osEventFlagsClear(event_group_id, DISRUPTOR_END);
+					read_disruptor_energy(&energy);
+					energy -= (stop - start); // subtract total ticks ran from disruptor energy
+					write_disruptor_energy(energy);
+					osEventFlagsClear(event_group_id, DISRUPTOR_STATE);
+					break;
+				}
 			}
+			osDelay(100);
 		}
-
-
-//		osDelay(100);
 	}
-
 }
 
 void gyro_polling_task(void* arg){
 	(void) &arg;
-//	while(1){
-//		osDelay(100);
-//	}
 
+	const double EXCESSIVE_ANGLE = 1.57;
 	int zero_range = 40;
 	double T = 0.02;
 	float rads_ratio = 0.017453;
@@ -256,6 +344,12 @@ void gyro_polling_task(void* arg){
 	double y_dif = 0;
 	while(1){
 		// no idea why this is functional when backwards
+		uint32_t flags = osEventFlagsGet(event_group_id);
+		if(flags & DISRUPTOR_STATE){
+			osDelay(100);
+			continue;
+		}
+
 		y_read = Gyro_Get_X_Velocity();
 		x_read = Gyro_Get_Y_Velocity();
 
@@ -268,11 +362,14 @@ void gyro_polling_task(void* arg){
 		x_rads += x_rads_per_sec * T;
 		y_rads += y_rads_per_sec * T;
 
+		if(x_rads > EXCESSIVE_ANGLE || x_rads < -EXCESSIVE_ANGLE || y_rads > EXCESSIVE_ANGLE || y_rads < -EXCESSIVE_ANGLE){
+			osEventFlagsSet(event_group_id, GAME_OVER_LOSS);
+		}
+
 		x_accel = physics.gravity * sin(x_rads);
 		y_accel = physics.gravity * sin(y_rads);
 
 		// if x or y collides with an object, reset its velocity. TRY ACCELL INSTEAD?
-		uint32_t flags = osEventFlagsGet(event_group_id);
 		if(flags & COLLISION_X){
 			osEventFlagsClear(event_group_id, COLLISION_X);
 			x_velocity = 0;
@@ -315,15 +412,6 @@ void gyro_polling_task(void* arg){
 		osDelay(20);
 	}
 }
-
-//x_accel = g * sin(x_angle);
-//y_accel = g * sin(y_agle_';')
-//x_vel += x_accel * timestep;
-//""
-//x_pos += x_vel * timestep;
-//''
-//// Collision
-//// Game logic busisens
 
 void generate_maze(void){
 	maze = malloc(sizeof(Cell*) * maze_config.size->width);
@@ -415,12 +503,56 @@ void generate_features(void){
 	}
 }
 
+void game_time_decrement(void* arg){
+	osMutexAcquire(game_time_mutex_id, osWaitForever);
+
+	game_time -= TICKRATE;
+	if(game_time <= 0){
+		game_time = 0;
+		osTimerStop(game_timer_id);
+		osEventFlagsSet(event_group_id, GAME_OVER_LOSS);
+	}
+
+	osMutexRelease(game_time_mutex_id);
+}
+
+void read_game_time(int* time){
+	osMutexAcquire(game_time_mutex_id, osWaitForever);
+
+	*time = game_time;
+
+	osMutexRelease(game_time_mutex_id);
+}
+
+void write_game_time(int time){
+	osMutexAcquire(game_time_mutex_id, osWaitForever);
+
+	game_time = time;
+
+	osMutexRelease(game_time_mutex_id);
+}
+
+void game_end(bool win){
+	osTimerStop(game_timer_id);
+	if(win){
+		osEventFlagsSet(event_group_id, GAME_OVER_WIN);
+	}else{
+		osEventFlagsSet(event_group_id, GAME_OVER_LOSS);
+	}
+	osEventFlagsClear(event_group_id, MAZE_GENERATED);
+	// graphic
+
+	osDelay(3000);
+	if(!win) game_score = 0;
+	write_disruptor_energy(drone.energy_store->max_energy);
+	osEventFlagsSet(event_group_id, GAME_RESET);
+}
+
 void game_comp_task(void* arg){
 	(void) &arg;
 
-
 	while(1){
-		osEventFlagsClear(event_group_id, GAME_RESET);
+		osEventFlagsClear(event_group_id, GAME_OVER_LOSS | GAME_OVER_WIN | GAME_RESET);
 
 		// generate maze first
 		generate_maze();
@@ -428,23 +560,27 @@ void game_comp_task(void* arg){
 		double xy_dif[4];
 		double xy_pos[2];
 
-		// random ball spawn location
+		// random ball spawn location, checking for spawning on a hole
 		uint32_t rand;
-		HAL_RNG_GenerateRandomNumber(hrng_ptr, &rand);
-		xy_pos[0] = (rand % maze_config.size->width)*maze_config.cell_size + maze_config.cell_size/2;
-		HAL_RNG_GenerateRandomNumber(hrng_ptr, &rand);
-		xy_pos[1] = (rand % maze_config.size->width)*maze_config.cell_size + maze_config.cell_size/2;
+		bool invalid_spawn_pos = true;
+		while(invalid_spawn_pos){
+			invalid_spawn_pos = false;
+			HAL_RNG_GenerateRandomNumber(hrng_ptr, &rand);
+			xy_pos[0] = (rand % maze_config.size->width)*maze_config.cell_size + maze_config.cell_size/2;
+			HAL_RNG_GenerateRandomNumber(hrng_ptr, &rand);
+			xy_pos[1] = (rand % maze_config.size->width)*maze_config.cell_size + maze_config.cell_size/2;
 
+			for(int i=0; i<maze_config.holes->number; i++){
+				if(maze_config.holes->locations_list[i].x == xy_pos[0] && maze_config.holes->locations_list[i].y == xy_pos[1]){
+					invalid_spawn_pos = true;
+				}
+			}
+		}
 		write_xy_position(xy_pos);
+		write_game_time(TOTAL_TIME);
+		osTimerStart(game_timer_id, TICKRATE);
 		osEventFlagsSet(event_group_id, MAZE_GENERATED);
 
-	//	while(1){
-	//		read_xy_pos_dif(xy_dif);
-	//		xy_pos[0] += xy_dif[0];
-	//		xy_pos[1] += xy_dif[1];
-	//		write_xy_position(xy_pos);
-	//		osDelay(100);
-	//	}
 		bool walls[4];
 		int x_collision, y_collision;
 		int radius = drone.diameter/2;
@@ -466,12 +602,16 @@ void game_comp_task(void* arg){
 				y_collision = 0;
 				read_xy_pos_dif(xy_dif);
 				read_xy_position(xy_pos);
+
 				x_prev_pos_dif = xy_dif[0];
 				y_prev_pos_dif = xy_dif[1];
 
-
 				int cur_x_cell = xy_pos[0]/cell_size;
 				int cur_y_cell = xy_pos[1]/cell_size;
+
+				if(cur_x_cell < 0 || cur_x_cell > maze_config.size->width-1 || cur_y_cell < 0 || cur_y_cell > maze_config.size->height-1){
+					osEventFlagsSet(event_group_id, GAME_OVER_LOSS);
+				}
 
 				// left, right, top, bottom
 				get_nearby_walls(cur_x_cell, cur_y_cell, walls);
@@ -483,16 +623,22 @@ void game_comp_task(void* arg){
 
 				if(disruptor_activated){
 					// do something to teleport out of walls
-	//				int radius = drone.diameter/2;
-	//				int board_height = maze_config.cell_size * maze_config.size->height;
-	//				int board_width = maze_config.cell_size * maze_config.size->width;
-	//				while((x_sub_pos < radius || y_sub_pos < radius) && xy_pos[0] >= 0 && xy_pos[0] < board_width && xy_pos[1] >= radius && xy_pos[1] < board_height + radius){
-	//					xy_pos[0] += x_prev_pos_dif;
-	//					xy_pos[1] += y_prev_pos_dif;
-	//				}
-	//				write_xy_position(xy_pos);
+					if(walls[0] && x_sub_pos < radius){
+						xy_pos[0] = (int)(cur_x_cell*maze_config.cell_size) + radius;
+					}else if(walls[1] && x_sub_pos > (cell_size - radius)){
+						xy_pos[0] = (int)((cur_x_cell)*maze_config.cell_size) + (cell_size - radius);
+					}
+
+					if(walls[2] && y_sub_pos < radius){
+						xy_pos[1] = (int)(cur_y_cell*maze_config.cell_size) + radius;
+					}else if(walls[3] && y_sub_pos > (cell_size - radius)){
+						xy_pos[1] = (int)((cur_y_cell)*maze_config.cell_size) + (cell_size - radius);
+					}
+
+					write_xy_position(xy_pos);
 					disruptor_activated = false;
 				}
+
 				if(xy_dif[2] < 0 && walls[0]){
 					// negative x velocity
 					if(x_sub_pos + xy_dif[0] - radius < 0){
@@ -538,6 +684,7 @@ void game_comp_task(void* arg){
 
 			write_xy_position(xy_pos);
 			// euclidean distance of each waypoint to determine if collected.
+			bool win = false;
 			double distance;
 			xy_pair* loc_list = maze_config.waypoints->locations_list;
 			for(int i=0; i<maze_config.waypoints->number; i++){
@@ -545,27 +692,36 @@ void game_comp_task(void* arg){
 					distance = sqrt(pow(loc_list[i].x - xy_pos[0], 2) + pow(loc_list[i].y - xy_pos[1], 2));
 					if(distance < radius + 1){
 						loc_list[i].collected = true;
+						game_score += 1;
 					}
-				}
-			}
-
-			bool hole_traversed = false;
-			loc_list = maze_config.holes->locations_list;
-			for(int i=0; i<maze_config.holes->number; i++){
-				distance = sqrt(pow(loc_list[i].x - xy_pos[0], 2) + pow(loc_list[i].y - xy_pos[1], 2));
-				if(distance < radius){
-					hole_traversed = true;
 					break;
 				}
+				if(i == maze_config.waypoints->number-1 && loc_list[i].collected){
+					win = true;
+				}
 			}
 
-			if(hole_traversed){
-				// game fail
-				osEventFlagsSet(event_group_id, GAME_RESET);
-				osEventFlagsClear(event_group_id, MAZE_GENERATED);
-				osDelay(3000);
-				// FAIL graphic
+			if(win){
+				game_end(true);
 				break;
+			}
+
+			if(!(osEventFlagsGet(event_group_id) & DISRUPTOR_STATE)){
+				bool hole_traversed = false;
+				loc_list = maze_config.holes->locations_list;
+				for(int i=0; i<maze_config.holes->number; i++){
+					distance = sqrt(pow(loc_list[i].x - xy_pos[0], 2) + pow(loc_list[i].y - xy_pos[1], 2));
+					if(distance < radius){
+						hole_traversed = true;
+						break;
+					}
+				}
+
+				if((osEventFlagsGet(event_group_id) & GAME_OVER_LOSS) || hole_traversed){
+					// game fail
+					game_end(false);
+					break;
+				}
 			}
 
 			osDelay(100);
@@ -594,10 +750,12 @@ void lcd_draw_maze(bool disruptor_active){
 	}
 
 	// draw features
+	color = LCD_COLOR_RED;
 	xy_pair* loc_list = maze_config.waypoints->locations_list;
 	for(int i=0; i<maze_config.waypoints->number; i++){
 		if(!maze_config.waypoints->locations_list[i].collected){
-			LCD_Draw_Circle_Fill(loc_list[i].x, loc_list[i].y, maze_config.waypoints->diameter/2, LCD_COLOR_RED);
+			LCD_Draw_Circle_Fill(loc_list[i].x, loc_list[i].y, maze_config.waypoints->diameter/2, color);
+			color = LCD_COLOR_GREY;
 		}
 	}
 
@@ -613,19 +771,41 @@ void lcd_display_task(void* arg){
 	LCD_SetTextColor(LCD_COLOR_BLACK);
 	LCD_SetFont(&Font16x24);
 
-//	while(1){
-//		osDelay(100);
-//	}
-
 	int radius = drone.diameter/2;
 	double xy_pos[2];
-//	double x_pos, y_pos;
-
+	char time_str[8];
+	int game_time;
+	int menu_x_offset = 10;
+	int menu_y_offset = (LCD_PIXEL_HEIGHT/2)-20;
 	while(1){
-		osEventFlagsWait(event_group_id, MAZE_GENERATED, osFlagsNoClear, osWaitForever);
 		uint32_t flags = osEventFlagsGet(event_group_id);
 		bool disruptor_active = flags & DISRUPTOR_STATE;
-		if(!(flags & GAME_RESET)){
+		lcd_draw_maze(disruptor_active);
+
+		// game timer display
+		read_game_time(&game_time);
+		game_time = (int)game_time/1000;
+		itoa(game_time, time_str, 10);
+		if(xy_pos[0] > 1 && xy_pos[0] < 35 && xy_pos[1] > 1 && xy_pos[1] < 25){
+			LCD_Draw_Rectangle_Fill(1, LCD_PIXEL_HEIGHT-25, 35, 25, LCD_COLOR_WHITE);
+			LCD_DisplayString(5, LCD_PIXEL_HEIGHT-20, time_str);
+		}else{
+			LCD_Draw_Rectangle_Fill(1, 1, 35, 25, LCD_COLOR_WHITE);
+			LCD_DisplayString(5, 5, time_str);
+		}
+
+		if(flags & GAME_OVER_LOSS || flags & GAME_OVER_WIN){
+			bool win = flags & GAME_OVER_WIN;
+			LCD_Draw_Rectangle_Fill(menu_x_offset, menu_y_offset, 220, 69, LCD_COLOR_BLACK); // background frame
+			LCD_Draw_Rectangle_Fill(menu_x_offset+2, menu_y_offset+2, 216, 65, LCD_COLOR_WHITE); // foreground white
+			LCD_DisplayString(menu_x_offset+50, menu_y_offset+4, *game_end_status[!win]); // win/lose
+			LCD_DisplayString(menu_x_offset+14, menu_y_offset+24, *game_end_status[2]); // score
+			LCD_DisplayNumber(menu_x_offset+194, menu_y_offset+24, game_score);
+		}
+		osEventFlagsWait(event_group_id, MAZE_GENERATED, osFlagsNoClear, osWaitForever);
+
+		read_xy_position(xy_pos);
+		if(!(flags & GAME_OVER_LOSS || flags & GAME_OVER_WIN)){
 			if(disruptor_active){
 				LCD_Draw_Circle_Fill((int)xy_pos[0], (int)xy_pos[1], radius, LCD_COLOR_MAGENTA);
 			}else{
@@ -633,17 +813,57 @@ void lcd_display_task(void* arg){
 			}
 		}
 
-		lcd_draw_maze(disruptor_active);
-		read_xy_position(xy_pos);
-
 		osDelay(100);
 		LCD_Clear(0, LCD_COLOR_WHITE);
 	}
 }
 
-void led_output_task(void* arg){
+void green_led_task(void* arg){
 	(void) &arg;
+	int max_energy = drone.energy_store->max_energy;
+	int on_time_ms, energy;
+	const int TOTAL_PERIOD = 20;
 	while(1){
-		osDelay(100);
+        read_disruptor_energy(&energy);
+
+        if(energy < max_energy){
+			// Calculate the ON time based on the energy percentage
+			on_time_ms = (int)((float)energy / max_energy * TOTAL_PERIOD); // 20ms is the total period (ON + OFF)
+
+			// Turn ON the LED
+			HAL_GPIO_WritePin(LED_PORT, GRN_LED_PIN, GPIO_PIN_SET);
+			osDelay(on_time_ms);
+
+			// Turn OFF the LED
+			HAL_GPIO_WritePin(LED_PORT, GRN_LED_PIN, GPIO_PIN_RESET);
+			osDelay(TOTAL_PERIOD - on_time_ms); // Subtract ON time from total period to get OFF time
+        }else{
+        	HAL_GPIO_WritePin(LED_PORT, GRN_LED_PIN, GPIO_PIN_SET);
+        	osDelay(100);
+        }
+	}
+}
+
+void red_led_task(void* arg){
+	(void) &arg;
+	int min_energy = drone.disruptor->min_activation_energy;
+	int half_period, energy;
+	while(1){
+        read_disruptor_energy(&energy);
+
+        if(energy < min_energy){
+        	half_period = (min_energy - energy)/20;
+        	if(half_period < 2) half_period = 2;
+			// Turn ON the LED
+			HAL_GPIO_WritePin(LED_PORT, RED_LED_PIN, GPIO_PIN_SET);
+			osDelay(half_period);
+
+			// Turn OFF the LED
+			HAL_GPIO_WritePin(LED_PORT, RED_LED_PIN, GPIO_PIN_RESET);
+			osDelay(half_period); // Subtract ON time from total period to get OFF time
+        }else{
+        	HAL_GPIO_WritePin(LED_PORT, RED_LED_PIN, GPIO_PIN_RESET);
+        	osDelay(100);
+        }
 	}
 }

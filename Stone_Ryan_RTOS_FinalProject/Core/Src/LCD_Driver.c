@@ -299,6 +299,13 @@ void LCD_Draw_Circle_Fill(uint16_t Xpos, uint16_t Ypos, uint16_t radius, uint16_
     }
 }
 
+void LCD_Draw_Rectangle_Fill(uint16_t Xpos, uint16_t Ypos, uint16_t width, uint16_t height, uint16_t color)
+{
+	for(int y=Ypos; y<(height+Ypos); y++){
+		LCD_Draw_Horizontal_Line(Xpos, y, width, color);
+	}
+}
+
 // Draw Vertical Line
 void LCD_Draw_Vertical_Line(uint16_t x, uint16_t y, uint16_t len, uint16_t color)
 {

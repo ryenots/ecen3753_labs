@@ -62,7 +62,7 @@ struct Waypoints{
 	int diameter;
 	bool reuse;
 	xy_pair* locations_list; // dynamic alloc this list
-}waypoints_ = {4, 6, 0, NULL};
+}waypoints_ = {1, 6, 0, NULL};
 
 struct Holes{
 	int number;

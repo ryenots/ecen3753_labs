@@ -94,7 +94,7 @@ const osThreadAttr_t led_thread_attr = {
 void timer_callback(void* arg);
 void gyro_input_task(void* arg);
 void btn_input_task(void* arg);
-void led_output_task(void* arg);
+void green_led_task(void* arg);
 
 /*
  * @brief Initialize application.
@@ -126,7 +126,7 @@ void init_app(){
 	if(btn_input_task_id == NULL) while(1);
 
 	//init led output task
-	led_output_task_id = osThreadNew(led_output_task, (void*)0, &led_thread_attr);
+	led_output_task_id = osThreadNew(green_led_task, (void*)0, &led_thread_attr);
 	if(led_output_task_id == NULL) while(1);
 
 	//init timer
@@ -228,7 +228,7 @@ void gyro_input_task(void* arg){
 	}
 }
 
-void led_output_task(void* arg){
+void green_led_task(void* arg){
 	(void) &arg;
 	struct message* msg;
 	int16_t velocity = 0;
