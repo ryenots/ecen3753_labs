@@ -93,7 +93,7 @@ static int disruptor_energy;
 static int game_score;
 static int game_time;
 
-static char* game_end_status[3][10] = {
+static char* game_end_status[3][16] = {
 		{"YOU WIN!"},
 		{"YOU LOSE!"},
 		{"Total score: "}
